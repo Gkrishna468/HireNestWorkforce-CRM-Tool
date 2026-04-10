@@ -53,7 +53,9 @@ export function AppModal({
             </DialogDescription>
           )}
         </DialogHeader>
-        <div className="px-4 py-4 text-card-foreground">{children}</div>
+        <div className="px-4 py-4 text-card-foreground overflow-y-auto max-h-[calc(100vh-180px)]">
+          {children}
+        </div>
       </DialogContent>
     </Dialog>
   );

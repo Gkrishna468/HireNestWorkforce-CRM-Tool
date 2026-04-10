@@ -1,26 +1,24 @@
 {
-  "overview": "HireNest Command Center is a compact, unified CRM for staffing and recruiting teams. It centralizes Vendors, Clients, Recruiters, and Candidates into a single approval-gated command center with visual pipeline Kanban boards, a real-time Pulse dashboard, rule-based follow-up engine, and a morning briefing derived from live data.",
+  "overview": "HireNest Command Center is an AI-powered CRM for staffing and recruiting businesses. It centralizes vendors, clients, recruiters, candidates, and job orders with pipeline management, bench matching, and WhatsApp job intake.",
   "features": [
-    "4-entity CRM: Vendors, Clients, Recruiters, Candidates",
-    "Visual Kanban pipelines per entity type with drag-and-drop stage movement",
-    "Approval-gated workflows: offers, negotiations, onboarding, follow-ups",
-    "HireNest Pulse dashboard with color-coded health scores (Green/Yellow/Red)",
-    "Rule-based follow-up engine with approval queue",
-    "Morning briefing computed from live backend state",
-    "Recruiter daily check-ins and activity logging",
-    "Job orders and candidate submissions management",
-    "Full activity timelines per entity",
-    "Mobile-responsive dark sidebar layout"
+    "WhatsApp job requirement text parser — paste raw text, auto-extract job details",
+    "Auto-create client records from parsed company names",
+    "Job intake modal with pre-filled review form",
+    "LPM/LPA/Per Hour rate structure on all jobs",
+    "Vendor bench management with match scoring",
+    "Kanban pipelines for all entity types",
+    "Light/dark/system theme toggle",
+    "Supabase integration with SQL editor"
   ],
-  "category": "productivity",
+  "category": "crm",
   "tags": [
     "crm",
     "staffing",
     "recruiting",
-    "kanban",
-    "approval-workflow",
-    "pipeline",
-    "productivity"
+    "whatsapp",
+    "jobs",
+    "bench-management",
+    "supabase"
   ],
-  "last_updated": "2026-04-10T04:18:54.993Z"
+  "last_updated": "2026-04-10T10:51:39.338Z"
 }

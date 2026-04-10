@@ -724,6 +724,7 @@ export function useUploadBench() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.bench });
+      qc.invalidateQueries({ queryKey: ["bench-match"] });
     },
     onError: handleMutationError,
   });

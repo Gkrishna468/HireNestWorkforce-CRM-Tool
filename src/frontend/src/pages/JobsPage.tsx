@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   useBenchRecords,
   useClients,
+  useCreateClient,
   useCreateJob,
   useJobs,
   useMatchBench,
@@ -24,6 +25,7 @@ import {
 } from "@/hooks/use-crm";
 import type { BenchMatch, Client, Job, JobStatus } from "@/types/crm";
 import type { JobFormInput } from "@/types/forms";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   Briefcase,
@@ -33,6 +35,7 @@ import {
   IndianRupee,
   Linkedin,
   MapPin,
+  MessageSquare,
   Plus,
   RefreshCw,
   Share2,
@@ -45,6 +48,182 @@ import { toast } from "sonner";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type RateType = "LPM" | "LPA" | "PerHour";
+
+interface ParsedJobFields {
+  title: string;
+  companyName: string;
+  roleSummary: string;
+  responsibilities: string;
+  requiredSkills: string;
+  experience: string;
+  location: string;
+  rateType: RateType | "";
+  rateAmount: string;
+  rateCurrency: string;
+}
+
+// ── parseJobRequirementText ───────────────────────────────────────────────────
+
+export function parseJobRequirementText(text: string): ParsedJobFields {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  function extract(patterns: RegExp[]): string {
+    for (const pat of patterns) {
+      for (const line of lines) {
+        const m = line.match(pat);
+        if (m?.[1]) return m[1].trim();
+      }
+    }
+    return "";
+  }
+
+  // Title: look for "Hiring:", "Position:", "Role:", "Job Title:", or first "bold" line
+  let title = extract([
+    /^(?:hiring[:\-\s*]*|position[:\-\s*]*|role[:\-\s*]*|job\s*title[:\-\s*]*|opening[:\-\s*]*|vacancy[:\-\s*]*)(.+)$/i,
+    /^[*_]{1,2}([^*_\n]+)[*_]{1,2}$/,
+  ]);
+  // Fallback: grab first non-label line as title if short enough
+  if (!title) {
+    for (const line of lines) {
+      if (
+        line.length < 80 &&
+        !/^(hi|hello|dear|greetings|fw:|fwd:)/i.test(line)
+      ) {
+        title = line
+          .replace(/^[*_]{1,2}/, "")
+          .replace(/[*_]{1,2}$/, "")
+          .trim();
+        break;
+      }
+    }
+  }
+
+  // Company
+  const companyName = extract([
+    /^(?:company[:\-\s*]*|client[:\-\s*]*|organization[:\-\s*]*|org[:\-\s*]*|firm[:\-\s*]*)(.+)$/i,
+  ]);
+
+  // Skills
+  const requiredSkills = extract([
+    /^(?:skills?[:\-\s*]*|required\s*skills?[:\-\s*]*|tech\s*stack[:\-\s*]*|technologies[:\-\s*]*|key\s*skills?[:\-\s*]*)(.+)$/i,
+  ]);
+
+  // Experience
+  const experience = extract([
+    /^(?:exp(?:erience)?[:\-\s*]*|years?[:\-\s*]*)(.+)$/i,
+    /(\d+\+?\s*(?:to|-|\–)?\s*\d*\+?\s*years?)/i,
+    /(\d+\+?\s*years?)/i,
+  ]);
+
+  // Rate / Compensation
+  let rateType: RateType | "" = "";
+  let rateAmount = "";
+  let rateCurrency = "INR";
+
+  // Detect currency symbol
+  if (/\$/.test(text)) rateCurrency = "USD";
+  else if (/£/.test(text)) rateCurrency = "GBP";
+  else if (/€/.test(text)) rateCurrency = "EUR";
+  else rateCurrency = "INR";
+
+  // Try to find rate line
+  const rateLine = lines.find(
+    (l) =>
+      /(?:ctc|salary|compensation|rate|budget|package|pay)[:\-\s*]/i.test(l) ||
+      /(?:lpm|lpa|per\s*hour|\/hr|\/month|\/year)/i.test(l) ||
+      /[₹$€£]\s*\d/.test(l),
+  );
+
+  if (rateLine) {
+    if (/lpm|per\s*month|\/month/i.test(rateLine)) {
+      rateType = "LPM";
+      const m = rateLine.match(
+        /[₹$€£]?\s*(\d+(?:\.\d+)?)\s*(?:lpm|l\s*pm|per\s*month)/i,
+      );
+      if (m) rateAmount = m[1];
+    } else if (/lpa|per\s*annum|\/year|\/annum/i.test(rateLine)) {
+      rateType = "LPA";
+      const m = rateLine.match(
+        /[₹$€£]?\s*(\d+(?:\.\d+)?)\s*(?:lpa|l\s*pa|per\s*annum|per\s*year)/i,
+      );
+      if (m) rateAmount = m[1];
+    } else if (/per\s*hour|\/hr|\/hour|hourly/i.test(rateLine)) {
+      rateType = "PerHour";
+      const m = rateLine.match(
+        /[₹$€£]?\s*(\d+(?:\.\d+)?)\s*(?:per\s*hour|\/hr|\/hour)/i,
+      );
+      if (m) rateAmount = m[1];
+    }
+
+    // Fallback: grab first number from rate line
+    if (!rateAmount) {
+      const m = rateLine.match(/[₹$€£]?\s*(\d+(?:\.\d+)?)/);
+      if (m) rateAmount = m[1];
+    }
+  }
+
+  // Location
+  const location = extract([
+    /^(?:location[:\-\s*]*|place[:\-\s*]*|city[:\-\s*]*|work\s*location[:\-\s*]*)(.+)$/i,
+  ]);
+
+  // Responsibilities: grab text after "Responsibilities:" label
+  let responsibilities = "";
+  let inResponsibilities = false;
+  const respLines: string[] = [];
+  for (const line of lines) {
+    if (
+      /^(?:responsibilities|key\s*responsibilities|job\s*responsibilities|duties|key\s*duties)[:\-\s*]/i.test(
+        line,
+      )
+    ) {
+      inResponsibilities = true;
+      // grab inline content after the label
+      const after = line.replace(/^[^:]+:\s*/, "").trim();
+      if (after) respLines.push(after);
+      continue;
+    }
+    if (inResponsibilities) {
+      // stop at next label
+      if (
+        /^(?:skills?|experience|location|company|client|salary|rate|ctc|compensation|education|qualification)[:\-\s*]/i.test(
+          line,
+        )
+      ) {
+        break;
+      }
+      respLines.push(line);
+    }
+  }
+  if (respLines.length) {
+    responsibilities = respLines.join("\n");
+  }
+
+  // Role summary: first short descriptive line not a label (after title)
+  let roleSummary = extract([
+    /^(?:summary[:\-\s*]*|role\s*summary[:\-\s*]*|about\s*(?:the\s*)?role[:\-\s*]*)(.+)$/i,
+  ]);
+  if (!roleSummary && responsibilities) {
+    // First sentence of responsibilities
+    roleSummary = responsibilities.split(/[.\n]/)[0].trim().slice(0, 200);
+  }
+
+  return {
+    title,
+    companyName,
+    roleSummary,
+    responsibilities,
+    requiredSkills,
+    experience,
+    location,
+    rateType,
+    rateAmount,
+    rateCurrency,
+  };
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -143,6 +322,485 @@ function WhatsAppIcon({ className }: { className?: string }) {
   );
 }
 
+// ── WhatsApp Job Import Modal ─────────────────────────────────────────────────
+
+function WhatsAppJobImportModal({
+  open,
+  onClose,
+  clients,
+}: {
+  open: boolean;
+  onClose: () => void;
+  clients: Client[];
+}) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [rawText, setRawText] = useState("");
+  const [parsed, setParsed] = useState<ParsedJobFields | null>(null);
+  const [form, setForm] = useState<JobFormInput & { _companyName: string }>({
+    clientId: "",
+    title: "",
+    roleSummary: "",
+    responsibilities: "",
+    requiredSkills: "",
+    experience: "",
+    location: "",
+    rateType: "",
+    rateAmount: "",
+    rateCurrency: "INR",
+    _companyName: "",
+  });
+  const [matchedClient, setMatchedClient] = useState<Client | null>(null);
+  const [isNewClient, setIsNewClient] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const createClient = useCreateClient();
+  const createJob = useCreateJob();
+  const qc = useQueryClient();
+
+  function handleParse() {
+    if (!rawText.trim()) {
+      toast.error("Please paste some WhatsApp text first.");
+      return;
+    }
+    const fields = parseJobRequirementText(rawText);
+    setParsed(fields);
+
+    // Fuzzy client match — case-insensitive substring
+    let found: Client | null = null;
+    if (fields.companyName) {
+      const needle = fields.companyName.toLowerCase();
+      found =
+        clients.find(
+          (c) =>
+            c.name.toLowerCase().includes(needle) ||
+            needle.includes(c.name.toLowerCase()) ||
+            c.company?.toLowerCase().includes(needle) ||
+            (c.company !== undefined &&
+              needle.includes(c.company.toLowerCase())),
+        ) ?? null;
+    }
+
+    setMatchedClient(found);
+    setIsNewClient(!found && !!fields.companyName);
+
+    setForm({
+      clientId: found?.id ?? "",
+      title: fields.title,
+      roleSummary: fields.roleSummary,
+      responsibilities: fields.responsibilities,
+      requiredSkills: fields.requiredSkills,
+      experience: fields.experience,
+      location: fields.location,
+      rateType: fields.rateType,
+      rateAmount: fields.rateAmount,
+      rateCurrency: fields.rateCurrency,
+      _companyName: fields.companyName,
+    });
+
+    setStep(2);
+  }
+
+  function handleFieldChange(
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) {
+    const { name, value } = e.target;
+    setForm((prev) => ({ ...prev, [name]: value }));
+  }
+
+  async function handleSave() {
+    if (!form.title.trim()) {
+      toast.error("Job title is required.");
+      return;
+    }
+    if (!form.rateType) {
+      toast.error("Please select a rate structure.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      let clientId = form.clientId;
+
+      // Auto-create client if new
+      if (isNewClient && form._companyName) {
+        const newClient = await createClient.mutateAsync({
+          name: form._companyName,
+          email: "",
+          company: form._companyName,
+        });
+        clientId = newClient.id;
+      }
+
+      if (!clientId) {
+        toast.error("Please select or ensure a client is linked.");
+        setIsSaving(false);
+        return;
+      }
+
+      const { _companyName: _ignored, ...jobInput } = form;
+      await createJob.mutateAsync({ ...jobInput, clientId });
+
+      qc.invalidateQueries({ queryKey: ["clients"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+
+      toast.success(
+        isNewClient
+          ? `Job created and new client "${form._companyName}" added`
+          : "Job created successfully",
+      );
+
+      handleClose();
+    } catch {
+      // errors are shown by the hooks themselves
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleClose() {
+    onClose();
+    // Reset after animation
+    setTimeout(() => {
+      setStep(1);
+      setRawText("");
+      setParsed(null);
+      setMatchedClient(null);
+      setIsNewClient(false);
+    }, 200);
+  }
+
+  if (!open) return null;
+
+  return (
+    <dialog
+      open
+      className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-0 m-0 max-w-none w-full h-full"
+      aria-label="Import job from WhatsApp"
+      data-ocid="whatsapp-import-modal"
+    >
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-foreground/30 backdrop-blur-sm cursor-default"
+        aria-hidden="true"
+        onClick={handleClose}
+        onKeyDown={(e) => e.key === "Escape" && handleClose()}
+      />
+
+      {/* Modal */}
+      <div className="relative z-10 w-full max-w-xl mx-4 bg-card border border-border rounded-lg shadow-elevated flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-emerald-500/10 border border-emerald-500/20">
+              <WhatsAppIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-card-foreground font-display">
+                Parse from WhatsApp
+              </h2>
+              <p className="text-[10px] text-muted-foreground">
+                Step {step} of 2 —{" "}
+                {step === 1
+                  ? "Paste requirement text"
+                  : "Review & confirm job details"}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors duration-150"
+            aria-label="Close modal"
+            data-ocid="wa-import-close"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* Step indicator */}
+        <div className="flex gap-0 px-4 pt-3 pb-0 shrink-0">
+          {[1, 2].map((s) => (
+            <div key={s} className="flex items-center gap-1.5 mr-4">
+              <span
+                className={[
+                  "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border",
+                  step === s
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : step > s
+                      ? "bg-primary/20 text-primary border-primary/40"
+                      : "bg-muted text-muted-foreground border-border",
+                ].join(" ")}
+              >
+                {s}
+              </span>
+              <span
+                className={`text-xs font-medium ${step === s ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                {s === 1 ? "Paste Text" : "Review & Save"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {step === 1 ? (
+            <>
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/20 px-3 py-2.5">
+                <p className="text-xs text-emerald-800 dark:text-emerald-300 leading-relaxed">
+                  <span className="font-semibold">How it works:</span> Paste the
+                  job requirement message you received on WhatsApp. The parser
+                  will extract title, company, skills, experience, rate (LPM /
+                  LPA / Per Hour), location, and responsibilities automatically.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">
+                  WhatsApp Message Text
+                </Label>
+                <Textarea
+                  value={rawText}
+                  onChange={(e) => setRawText(e.target.value)}
+                  placeholder={
+                    "Paste the job requirement message here…\n\nExample:\nHiring: Senior React Developer\nCompany: TechCorp India\nLocation: Pune / Remote\nSkills: React, TypeScript, Node.js\nExperience: 5+ years\nCTC: 2.5 LPM\n\nResponsibilities:\n- Lead frontend development\n- Mentor junior developers"
+                  }
+                  className="text-xs min-h-[280px] font-mono resize-none"
+                  data-ocid="wa-import-textarea"
+                  autoFocus
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Supports structured and conversational formats. Only company
+                  name and title are needed for auto-detection.
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Client badge */}
+              <div className="flex items-center gap-2">
+                {isNewClient ? (
+                  <div
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-emerald-50 border border-emerald-200 dark:bg-emerald-900/20 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-400 font-medium"
+                    data-ocid="wa-new-client-badge"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                    New client will be created:{" "}
+                    <span className="font-bold">{form._companyName}</span>
+                  </div>
+                ) : matchedClient ? (
+                  <div
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-blue-50 border border-blue-200 dark:bg-blue-900/20 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400 font-medium"
+                    data-ocid="wa-linked-client-badge"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                    Linked to existing client:{" "}
+                    <span className="font-bold">{matchedClient.name}</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1 w-full">
+                    <Label className="text-xs">Client *</Label>
+                    <Select
+                      value={form.clientId}
+                      onValueChange={(v) =>
+                        setForm((p) => ({ ...p, clientId: v }))
+                      }
+                    >
+                      <SelectTrigger
+                        className="h-8 text-xs"
+                        data-ocid="wa-client-select"
+                      >
+                        <SelectValue placeholder="Select client…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clients.map((c) => (
+                          <SelectItem
+                            key={c.id}
+                            value={c.id}
+                            className="text-xs"
+                          >
+                            {c.company ? `${c.company} (${c.name})` : c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+
+              {/* Parsed fields — editable */}
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Job Title *</Label>
+                  <Input
+                    name="title"
+                    value={form.title}
+                    onChange={handleFieldChange}
+                    placeholder="e.g. Senior React Developer"
+                    className="h-8 text-xs"
+                    data-ocid="wa-form-title"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Role Summary</Label>
+                  <Input
+                    name="roleSummary"
+                    value={form.roleSummary ?? ""}
+                    onChange={handleFieldChange}
+                    placeholder="One-line description"
+                    className="h-8 text-xs"
+                    data-ocid="wa-form-role-summary"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Responsibilities</Label>
+                  <Textarea
+                    name="responsibilities"
+                    value={form.responsibilities ?? ""}
+                    onChange={handleFieldChange}
+                    placeholder="Day-to-day responsibilities…"
+                    className="text-xs min-h-[100px]"
+                    data-ocid="wa-form-responsibilities"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Required Skills</Label>
+                    <Input
+                      name="requiredSkills"
+                      value={form.requiredSkills ?? ""}
+                      onChange={handleFieldChange}
+                      placeholder="React, Node.js, …"
+                      className="h-8 text-xs"
+                      data-ocid="wa-form-skills"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Experience</Label>
+                    <Input
+                      name="experience"
+                      value={form.experience ?? ""}
+                      onChange={handleFieldChange}
+                      placeholder="e.g. 5+ years"
+                      className="h-8 text-xs"
+                      data-ocid="wa-form-experience"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">Location</Label>
+                  <Input
+                    name="location"
+                    value={form.location ?? ""}
+                    onChange={handleFieldChange}
+                    placeholder="e.g. Pune, Remote"
+                    className="h-8 text-xs"
+                    data-ocid="wa-form-location"
+                  />
+                </div>
+
+                {/* Rate Structure */}
+                <RateStructure
+                  rateType={form.rateType as RateType | ""}
+                  rateAmount={form.rateAmount ?? ""}
+                  rateCurrency={form.rateCurrency ?? "INR"}
+                  onRateTypeChange={(v) =>
+                    setForm((p) => ({ ...p, rateType: v }))
+                  }
+                  onRateAmountChange={(v) =>
+                    setForm((p) => ({ ...p, rateAmount: v }))
+                  }
+                  onRateCurrencyChange={(v) =>
+                    setForm((p) => ({ ...p, rateCurrency: v }))
+                  }
+                />
+              </div>
+
+              {/* Parsed source hint */}
+              {parsed && (
+                <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground">
+                  <span className="font-semibold text-foreground">
+                    Parsed from text.
+                  </span>{" "}
+                  All fields are editable. Unrecognised fields were left blank.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/20 shrink-0">
+          {step === 2 ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setStep(1)}
+              disabled={isSaving}
+              data-ocid="wa-back-btn"
+            >
+              ← Back
+            </Button>
+          ) : (
+            <span />
+          )}
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={handleClose}
+              disabled={isSaving}
+              data-ocid="wa-cancel-btn"
+            >
+              Cancel
+            </Button>
+
+            {step === 1 ? (
+              <Button
+                size="sm"
+                className="h-7 text-xs gap-1"
+                onClick={handleParse}
+                disabled={!rawText.trim()}
+                data-ocid="wa-parse-btn"
+              >
+                <MessageSquare className="h-3 w-3" />
+                Parse & Continue →
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                className="h-7 text-xs gap-1"
+                onClick={handleSave}
+                disabled={isSaving || !form.title.trim()}
+                data-ocid="wa-save-btn"
+              >
+                {isSaving ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    {isNewClient ? "Creating client & job…" : "Saving job…"}
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-3 w-3" />
+                    {isNewClient ? "Create Client & Job" : "Save Job"}
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
 // ── Share Job Modal ───────────────────────────────────────────────────────────
 
 function ShareJobModal({
@@ -208,7 +866,7 @@ function ShareJobModal({
 
         {/* Body */}
         <div className="p-4 space-y-4">
-          {/* Job preview card — explicit contrast: dark text on slate-50 light, light text on slate-800 dark */}
+          {/* Job preview card */}
           <div
             className="rounded-md border border-border bg-slate-50 dark:bg-slate-800 p-3 space-y-2"
             data-ocid="share-preview-card"
@@ -1027,6 +1685,7 @@ export default function JobsPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | JobStatus>("all");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showWAImport, setShowWAImport] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [sharingJob, setSharingJob] = useState<Job | null>(null);
 
@@ -1079,15 +1738,27 @@ export default function JobsPage() {
         title={`Jobs (${openCount} open)`}
         subtitle="Track open roles, match bench candidates, and manage submissions"
         actions={
-          <Button
-            size="sm"
-            onClick={() => setShowAddModal(true)}
-            className="h-7 gap-1 text-xs"
-            data-ocid="add-job-btn"
-          >
-            <Plus className="h-3 w-3" />
-            Add Job
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowWAImport(true)}
+              className="h-7 gap-1.5 text-xs border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 hover:border-emerald-300 dark:border-emerald-800 dark:text-emerald-400 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/30"
+              data-ocid="wa-import-btn"
+            >
+              <WhatsAppIcon className="h-3.5 w-3.5" />
+              Parse from WhatsApp
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setShowAddModal(true)}
+              className="h-7 gap-1 text-xs"
+              data-ocid="add-job-btn"
+            >
+              <Plus className="h-3 w-3" />
+              Add Job
+            </Button>
+          </div>
         }
       />
 
@@ -1209,6 +1880,13 @@ export default function JobsPage() {
           onClose={() => setSharingJob(null)}
         />
       )}
+
+      {/* WhatsApp Import Modal */}
+      <WhatsAppJobImportModal
+        open={showWAImport}
+        onClose={() => setShowWAImport(false)}
+        clients={clients}
+      />
 
       {/* Add Job Modal */}
       <AppModal
