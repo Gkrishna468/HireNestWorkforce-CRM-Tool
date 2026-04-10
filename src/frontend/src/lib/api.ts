@@ -79,7 +79,20 @@ export async function createVendor(
   actor: Actor,
   input: VendorFormInput,
 ): Promise<Vendor> {
-  const result = await actor.createVendor(input);
+  // Backend: createVendor(name, company, contactName, email, phone, specialty, rateMin, rateMax, notes)
+  // Form: input.name = contact person name, input.company = company/vendor name
+  const vendorName = input.company?.trim() || input.name;
+  const result = await actor.createVendor(
+    vendorName,
+    input.company ?? "",
+    input.name,
+    input.email,
+    input.phone ?? "",
+    input.specialty ?? "",
+    0,
+    0,
+    input.notes ?? "",
+  );
   return mapVendor(result);
 }
 
@@ -117,7 +130,19 @@ export async function createClient(
   actor: Actor,
   input: ClientFormInput,
 ): Promise<Client> {
-  const result = await actor.createClient(input);
+  // Backend: createClient(name, company, hiringManager, email, phone, budget, timeline, notes)
+  // Form: input.name = hiring manager name, input.company = company name
+  const clientName = input.company?.trim() || input.name;
+  const result = await actor.createClient(
+    clientName,
+    input.company ?? "",
+    input.name,
+    input.email,
+    input.phone ?? "",
+    0,
+    "",
+    input.notes ?? "",
+  );
   return mapClient(result);
 }
 
@@ -155,7 +180,11 @@ export async function createRecruiter(
   actor: Actor,
   input: RecruiterFormInput,
 ): Promise<Recruiter> {
-  const result = await actor.createRecruiter(input);
+  const result = await actor.createRecruiter(
+    input.name,
+    input.email,
+    input.phone ?? "",
+  );
   return mapRecruiter(result);
 }
 

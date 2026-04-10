@@ -302,7 +302,7 @@ function VendorForm({
         <Button
           type="submit"
           size="sm"
-          disabled={isLoading}
+          disabled={isLoading || !form.name.trim() || !form.email.trim()}
           data-ocid="vendor-form-submit"
         >
           {isLoading ? "Adding…" : "Add Vendor"}

@@ -361,7 +361,11 @@ function AddRecruiterModal({
             type="submit"
             size="sm"
             className="h-7 text-xs"
-            disabled={createRecruiter.isPending}
+            disabled={
+              createRecruiter.isPending ||
+              !form.name.trim() ||
+              !form.email.trim()
+            }
             data-ocid="recruiter-submit-btn"
           >
             {createRecruiter.isPending ? "Adding…" : "Add Recruiter"}

@@ -43,6 +43,10 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
     title: "Settings",
     subtitle: "Manage integrations and app configuration",
   },
+  "/sql-editor": {
+    title: "SQL Editor",
+    subtitle: "Run queries on your Supabase database",
+  },
 };
 
 function getPageInfo(pathname: string) {

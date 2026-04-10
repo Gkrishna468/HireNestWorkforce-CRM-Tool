@@ -25,6 +25,7 @@ const FollowUpsPage = lazy(() => import("@/pages/FollowUpsPage"));
 const ApprovalsPage = lazy(() => import("@/pages/ApprovalsPage"));
 const ReportsPage = lazy(() => import("@/pages/ReportsPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
+const SqlEditorPage = lazy(() => import("@/pages/SqlEditorPage"));
 
 function PageWrapper({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<PageLoadingSpinner />}>{children}</Suspense>;
@@ -207,6 +208,17 @@ const settingsRoute = createRoute({
   ),
 });
 
+// SQL Editor
+const sqlEditorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/sql-editor",
+  component: () => (
+    <PageWrapper>
+      <SqlEditorPage />
+    </PageWrapper>
+  ),
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   dashboardRoute,
@@ -224,6 +236,7 @@ const routeTree = rootRoute.addChildren([
   approvalsRoute,
   reportsRoute,
   settingsRoute,
+  sqlEditorRoute,
 ]);
 
 export const router = createRouter({ routeTree });

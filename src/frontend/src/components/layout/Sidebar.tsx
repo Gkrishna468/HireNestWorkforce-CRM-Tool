@@ -17,6 +17,7 @@ import {
   CheckSquare,
   ChevronRight,
   ClipboardList,
+  Database,
   LayoutDashboard,
   Settings,
   UserCheck,
@@ -68,6 +69,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       badge: approvalCount,
     },
     { label: "Reports", href: "/reports", icon: BarChart3 },
+    { label: "SQL Editor", href: "/sql-editor", icon: Database },
   ];
 
   const sidebar = (
