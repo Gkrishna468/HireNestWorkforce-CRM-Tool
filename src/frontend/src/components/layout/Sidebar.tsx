@@ -75,27 +75,27 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const sidebar = (
     <aside
       className={cn(
-        "flex flex-col h-full w-[280px] bg-sidebar border-r border-sidebar-border flex-shrink-0",
+        "flex flex-col h-full w-[256px] bg-card border-r border-border flex-shrink-0",
         isMobile &&
-          "fixed inset-y-0 left-0 z-50 shadow-2xl transition-transform duration-300",
+          "fixed inset-y-0 left-0 z-50 shadow-elevated transition-transform duration-300",
         isMobile && !open && "-translate-x-full",
         isMobile && open && "translate-x-0",
       )}
       data-ocid="sidebar"
     >
       {/* Logo */}
-      <div className="flex items-center justify-between h-14 px-4 border-b border-sidebar-border flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded bg-primary flex items-center justify-center">
+      <div className="flex items-center justify-between h-14 px-4 border-b border-border flex-shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-md bg-primary flex items-center justify-center flex-shrink-0">
             <span className="text-xs font-bold text-primary-foreground font-display">
               HN
             </span>
           </div>
           <div>
-            <p className="text-sm font-bold text-white font-display leading-none">
+            <p className="text-sm font-bold text-foreground font-display leading-none">
               HireNest
             </p>
-            <p className="text-[10px] text-sidebar-muted-foreground leading-none mt-0.5">
+            <p className="text-[10px] text-muted-foreground leading-none mt-0.5">
               Command Center
             </p>
           </div>
@@ -114,7 +114,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        <p className="px-2 py-1.5 text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-widest">
+        <p className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-widest">
           Navigation
         </p>
         {navItems.map((item) => {
@@ -131,17 +131,17 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               className={cn(
                 "sidebar-item flex items-center gap-2.5 w-full group",
                 isActive
-                  ? "bg-primary/15 text-primary border border-primary/20"
-                  : "text-sidebar-foreground/70 hover:text-sidebar-foreground",
+                  ? "bg-primary/10 text-primary border border-primary/20"
+                  : "text-muted-foreground hover:text-foreground border border-transparent",
               )}
               data-ocid={`nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
             >
               <Icon
                 className={cn(
-                  "h-4 w-4 flex-shrink-0",
+                  "h-4 w-4 flex-shrink-0 transition-colors duration-150",
                   isActive
                     ? "text-primary"
-                    : "text-sidebar-foreground/40 group-hover:text-sidebar-foreground",
+                    : "text-muted-foreground/60 group-hover:text-foreground",
                 )}
               />
               <span className="flex-1 text-sm min-w-0 truncate">
@@ -161,7 +161,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
         {/* Divider + Settings */}
         <div className="pt-2 pb-1">
-          <div className="border-t border-sidebar-border" />
+          <div className="border-t border-border" />
         </div>
         {(() => {
           const isActive = location.pathname === "/settings";
@@ -172,17 +172,17 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               className={cn(
                 "sidebar-item flex items-center gap-2.5 w-full group",
                 isActive
-                  ? "bg-primary/15 text-primary border border-primary/20"
-                  : "text-sidebar-foreground/70 hover:text-sidebar-foreground",
+                  ? "bg-primary/10 text-primary border border-primary/20"
+                  : "text-muted-foreground hover:text-foreground border border-transparent",
               )}
               data-ocid="nav-settings"
             >
               <Settings
                 className={cn(
-                  "h-4 w-4 flex-shrink-0",
+                  "h-4 w-4 flex-shrink-0 transition-colors duration-150",
                   isActive
                     ? "text-primary"
-                    : "text-sidebar-foreground/40 group-hover:text-sidebar-foreground",
+                    : "text-muted-foreground/60 group-hover:text-foreground",
                 )}
               />
               <span className="flex-1 text-sm min-w-0 truncate">Settings</span>
@@ -195,16 +195,16 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       </nav>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-sidebar-border flex-shrink-0">
+      <div className="px-4 py-3 border-t border-border flex-shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center flex-shrink-0">
+          <div className="w-7 h-7 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center flex-shrink-0">
             <Users className="h-3.5 w-3.5 text-primary" />
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-sidebar-foreground truncate">
+            <p className="text-xs font-medium text-foreground truncate">
               Manager
             </p>
-            <p className="text-[10px] text-sidebar-foreground/40 truncate">
+            <p className="text-[10px] text-muted-foreground truncate">
               HireNest CRM
             </p>
           </div>
@@ -218,7 +218,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       <>
         {open && (
           <div
-            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-40 bg-foreground/40 backdrop-blur-sm"
             onClick={onClose}
             onKeyDown={(e) => e.key === "Escape" && onClose()}
             aria-hidden="true"

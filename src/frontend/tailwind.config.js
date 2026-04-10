@@ -49,6 +49,14 @@ export default {
           DEFAULT: "oklch(var(--card))",
           foreground: "oklch(var(--card-foreground))",
         },
+        success: {
+          DEFAULT: "oklch(var(--success) / <alpha-value>)",
+          foreground: "oklch(var(--success-foreground))",
+        },
+        warning: {
+          DEFAULT: "oklch(var(--warning) / <alpha-value>)",
+          foreground: "oklch(var(--warning-foreground))",
+        },
         chart: {
           1: "oklch(var(--chart-1))",
           2: "oklch(var(--chart-2))",

@@ -30,7 +30,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  DollarSign,
+  IndianRupee,
   Linkedin,
   MapPin,
   Plus,
@@ -42,13 +42,33 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type RateType = "LPM" | "LPA" | "PerHour";
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatRate(min?: number, max?: number): string {
-  if (!min && !max) return "—";
-  if (min && max) return `$${min}/hr – $${max}/hr`;
-  if (min) return `$${min}/hr+`;
-  return `Up to $${max}/hr`;
+function formatRateDisplay(job: Job): string {
+  if (job.rateType && job.rateAmount) {
+    const currency = job.rateCurrency ?? "INR";
+    const symbol =
+      currency === "INR"
+        ? "₹"
+        : currency === "USD"
+          ? "$"
+          : currency === "EUR"
+            ? "€"
+            : currency === "GBP"
+              ? "£"
+              : currency;
+    const label =
+      job.rateType === "LPM" ? "LPM" : job.rateType === "LPA" ? "LPA" : "/hr";
+    return `${symbol}${job.rateAmount} ${label}`;
+  }
+  if (job.rateMin && job.rateMax) return `$${job.rateMin}–$${job.rateMax}/hr`;
+  if (job.rateMin) return `$${job.rateMin}/hr+`;
+  if (job.rateMax) return `Up to $${job.rateMax}/hr`;
+  return "—";
 }
 
 function formatDate(ts: number): string {
@@ -61,9 +81,10 @@ function formatDate(ts: number): string {
 
 function getStatusVariant(
   status: JobStatus,
-): "default" | "secondary" | "outline" {
+): "default" | "secondary" | "destructive" | "outline" {
   if (status === "open") return "default";
   if (status === "filled") return "secondary";
+  if (status === "closed") return "destructive";
   return "outline";
 }
 
@@ -79,32 +100,30 @@ function getStatusLabel(status: JobStatus): string {
 
 function getMatchColor(score: number): string {
   if (score >= 0.7)
-    return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
-  if (score >= 0.4) return "bg-amber-500/15 text-amber-400 border-amber-500/30";
-  return "bg-red-500/15 text-red-400 border-red-500/30";
+    return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800";
+  if (score >= 0.4)
+    return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800";
+  return "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800";
 }
 
 function buildShareMessage(job: Job): string {
-  const reqPreview = job.requirements
-    ? job.requirements.slice(0, 200) +
-      (job.requirements.length > 200 ? "…" : "")
-    : "See full details on our website";
-  const location = job.location || "Remote/Flexible";
-  const rate =
-    job.rateMin && job.rateMax
-      ? `$${job.rateMin}-$${job.rateMax}/hr`
-      : job.rateMin
-        ? `$${job.rateMin}/hr+`
-        : job.rateMax
-          ? `Up to $${job.rateMax}/hr`
-          : "Competitive";
+  const location = job.location || "Remote / Flexible";
+  const rate = formatRateDisplay(job);
+  const summary = job.roleSummary
+    ? job.roleSummary.slice(0, 180) + (job.roleSummary.length > 180 ? "…" : "")
+    : job.responsibilities
+      ? job.responsibilities.slice(0, 180) +
+        (job.responsibilities.length > 180 ? "…" : "")
+      : "See full details on our website";
+  const skills = job.requiredSkills ? `\n🛠 Skills: ${job.requiredSkills}` : "";
 
-  return `🚀 Job Opening: ${job.title}
+  return `🚀 Hiring: ${job.title}
 📍 Location: ${location}
-💼 Requirements: ${reqPreview}
-💰 Rate: ${rate}
+💰 Compensation: ${rate}${skills}
 
-Interested? Contact us at HireNest Workforce
+${summary}
+
+📩 Interested? Reach us at HireNest Workforce
 🌐 app.hirenestworkforce.com`;
 }
 
@@ -137,7 +156,6 @@ function ShareJobModal({
 }) {
   const message = buildShareMessage(job);
   const jobsUrl = "https://app.hirenestworkforce.com/jobs";
-
   const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
   const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(jobsUrl)}&title=${encodeURIComponent(job.title)}&summary=${encodeURIComponent(message)}`;
 
@@ -161,26 +179,26 @@ function ShareJobModal({
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-background/80 backdrop-blur-sm cursor-default"
+        className="absolute inset-0 bg-foreground/30 backdrop-blur-sm cursor-default"
         aria-hidden="true"
         onClick={onClose}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       />
 
       {/* Modal */}
-      <div className="relative z-10 w-full max-w-md mx-4 bg-card border border-border rounded-lg shadow-xl">
+      <div className="relative z-10 w-full max-w-md mx-4 bg-card border border-border rounded-lg shadow-elevated">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <Share2 className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold text-foreground font-display">
+            <h2 className="text-sm font-semibold text-card-foreground font-display">
               Share Job Opening
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors duration-150"
             aria-label="Close modal"
             data-ocid="share-modal-close"
           >
@@ -190,14 +208,51 @@ function ShareJobModal({
 
         {/* Body */}
         <div className="p-4 space-y-4">
-          {/* Job title label */}
-          <div>
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
-              Sharing
-            </p>
-            <p className="text-sm font-medium text-foreground truncate">
-              {job.title}
-            </p>
+          {/* Job preview card — explicit contrast: dark text on slate-50 light, light text on slate-800 dark */}
+          <div
+            className="rounded-md border border-border bg-slate-50 dark:bg-slate-800 p-3 space-y-2"
+            data-ocid="share-preview-card"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 font-display">
+                  {job.title}
+                </p>
+                {job.location && (
+                  <p className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1 mt-0.5">
+                    <MapPin className="h-3 w-3" />
+                    {job.location}
+                  </p>
+                )}
+              </div>
+              <Badge variant="default" className="shrink-0 text-[10px]">
+                {getStatusLabel(job.status)}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-1 text-xs text-slate-800 dark:text-slate-200 font-medium">
+              <IndianRupee className="h-3 w-3 text-primary" />
+              {formatRateDisplay(job)}
+            </div>
+            {job.roleSummary && (
+              <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed line-clamp-2">
+                {job.roleSummary}
+              </p>
+            )}
+            {job.requiredSkills && (
+              <div className="flex flex-wrap gap-1">
+                {job.requiredSkills
+                  .split(",")
+                  .slice(0, 4)
+                  .map((s) => (
+                    <span
+                      key={s}
+                      className="px-1.5 py-0.5 rounded text-[10px] bg-primary/10 text-primary border border-primary/20"
+                    >
+                      {s.trim()}
+                    </span>
+                  ))}
+              </div>
+            )}
           </div>
 
           {/* Message preview */}
@@ -206,7 +261,7 @@ function ShareJobModal({
               Message Preview
             </p>
             <div
-              className="bg-muted/30 border border-border rounded-md px-3 py-2.5 text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed font-mono max-h-40 overflow-y-auto"
+              className="bg-muted border border-border rounded-md px-3 py-2.5 text-xs text-foreground whitespace-pre-wrap leading-relaxed font-mono max-h-36 overflow-y-auto"
               data-ocid="share-message-preview"
             >
               {message}
@@ -219,12 +274,11 @@ function ShareJobModal({
               Share Via
             </p>
             <div className="grid grid-cols-3 gap-2">
-              {/* WhatsApp */}
               <a
                 href={whatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-[#25D366]/10 border border-[#25D366]/25 text-[#25D366] hover:bg-[#25D366]/20 hover:border-[#25D366]/40 transition-colors"
+                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors duration-150 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
                 data-ocid="share-whatsapp-btn"
                 aria-label="Share on WhatsApp"
               >
@@ -232,12 +286,11 @@ function ShareJobModal({
                 <span className="text-[10px] font-semibold">WhatsApp</span>
               </a>
 
-              {/* LinkedIn */}
               <a
                 href={linkedinUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-[#0A66C2]/10 border border-[#0A66C2]/25 text-[#0A66C2] hover:bg-[#0A66C2]/20 hover:border-[#0A66C2]/40 transition-colors"
+                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors duration-150 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
                 data-ocid="share-linkedin-btn"
                 aria-label="Share on LinkedIn"
               >
@@ -245,11 +298,10 @@ function ShareJobModal({
                 <span className="text-[10px] font-semibold">LinkedIn</span>
               </a>
 
-              {/* Copy */}
               <button
                 type="button"
                 onClick={handleCopy}
-                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-muted/40 border border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-secondary border border-border text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors duration-150"
                 data-ocid="share-copy-btn"
                 aria-label="Copy message to clipboard"
               >
@@ -289,7 +341,7 @@ function BenchMatchesPanel({ job }: { job: Job }) {
             Bench Matches
           </h4>
           {!isLoading && matches.length > 0 && (
-            <Badge variant="secondary" className="h-4 text-[10px] px-1.5">
+            <Badge variant="outline" className="h-4 text-[10px] px-1.5">
               {matches.length}
             </Badge>
           )}
@@ -335,17 +387,15 @@ function BenchMatchesPanel({ job }: { job: Job }) {
           data-ocid="bench-no-matches"
         >
           <p className="text-xs text-muted-foreground">
-            No bench matches found for this job. Upload vendor bench candidates
-            in the{" "}
+            No bench matches found.{" "}
             <Link to="/bench" className="text-primary hover:underline">
-              Bench
-            </Link>{" "}
-            section.
+              Upload bench candidates
+            </Link>
+            .
           </p>
         </div>
       ) : (
         <div className="rounded-md border border-border overflow-hidden">
-          {/* Table header */}
           <div className="grid grid-cols-[56px_1fr_100px_100px_1fr_70px] gap-2 px-3 py-1.5 bg-muted/30 border-b border-border">
             {["Match %", "Candidate", "Vendor", "Role", "Skills", "Rate"].map(
               (h) => (
@@ -373,7 +423,7 @@ function BenchMatchRow({ match }: { match: BenchMatch }) {
 
   return (
     <div
-      className="grid grid-cols-[56px_1fr_100px_100px_1fr_70px] gap-2 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-muted/20 transition-colors text-xs items-center"
+      className="grid grid-cols-[56px_1fr_100px_100px_1fr_70px] gap-2 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-muted/20 transition-colors duration-150 text-xs items-center"
       data-ocid="bench-match-row"
     >
       <span
@@ -387,7 +437,7 @@ function BenchMatchRow({ match }: { match: BenchMatch }) {
       <span className="text-muted-foreground truncate">{match.vendorName}</span>
       <span className="text-muted-foreground truncate">{match.role}</span>
       <span className="text-muted-foreground truncate">{match.skill}</span>
-      <span className="text-muted-foreground">${match.rate}/hr</span>
+      <span className="text-muted-foreground">₹{match.rate}/hr</span>
     </div>
   );
 }
@@ -421,7 +471,7 @@ function JobDetailPanel({
         {/* Panel header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
           <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-foreground font-display truncate">
+            <h3 className="text-sm font-semibold text-card-foreground font-display truncate">
               {job.title}
             </h3>
             <p className="text-xs text-muted-foreground">{clientName}</p>
@@ -475,41 +525,94 @@ function JobDetailPanel({
                 {job.location}
               </span>
             )}
-            {(job.rateMin || job.rateMax) && (
-              <span className="flex items-center gap-0.5 text-muted-foreground">
-                <DollarSign className="h-3 w-3" />
-                {formatRate(job.rateMin, job.rateMax)}
-              </span>
-            )}
+            <span className="flex items-center gap-0.5 text-muted-foreground">
+              <IndianRupee className="h-3 w-3" />
+              {formatRateDisplay(job)}
+            </span>
           </div>
 
-          {/* Details */}
-          <div className="space-y-3">
+          {/* Client + Date */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
                 Client
               </p>
-              <p className="text-xs text-foreground">{clientName}</p>
+              <p className="text-xs text-card-foreground">{clientName}</p>
             </div>
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
                 Created
               </p>
-              <p className="text-xs text-foreground">
+              <p className="text-xs text-card-foreground">
                 {formatDate(job.createdAt)}
               </p>
             </div>
-            {job.requirements && (
-              <div>
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
-                  Requirements
-                </p>
-                <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">
-                  {job.requirements}
-                </p>
-              </div>
-            )}
           </div>
+
+          {/* Role Summary */}
+          {job.roleSummary && (
+            <div>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Role Summary
+              </p>
+              <p className="text-xs text-card-foreground leading-relaxed">
+                {job.roleSummary}
+              </p>
+            </div>
+          )}
+
+          {/* Responsibilities */}
+          {job.responsibilities && (
+            <div>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Responsibilities
+              </p>
+              <p className="text-xs text-card-foreground whitespace-pre-wrap leading-relaxed">
+                {job.responsibilities}
+              </p>
+            </div>
+          )}
+
+          {/* Legacy requirements */}
+          {!job.responsibilities && job.requirements && (
+            <div>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Requirements
+              </p>
+              <p className="text-xs text-card-foreground whitespace-pre-wrap leading-relaxed">
+                {job.requirements}
+              </p>
+            </div>
+          )}
+
+          {/* Required Skills */}
+          {job.requiredSkills && (
+            <div>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Required Skills
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {job.requiredSkills.split(",").map((s) => (
+                  <span
+                    key={s}
+                    className="px-2 py-0.5 rounded-md text-xs bg-primary/10 text-primary border border-primary/20 font-medium"
+                  >
+                    {s.trim()}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Experience */}
+          {job.experience && (
+            <div>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+                Experience Required
+              </p>
+              <p className="text-xs text-card-foreground">{job.experience}</p>
+            </div>
+          )}
 
           {/* Bench Matches */}
           <BenchMatchesPanel job={job} />
@@ -522,6 +625,139 @@ function JobDetailPanel({
         onClose={() => setShareOpen(false)}
       />
     </>
+  );
+}
+
+// ── Rate Structure Component ──────────────────────────────────────────────────
+
+const RATE_TYPES: { value: RateType; label: string; description: string }[] = [
+  { value: "LPM", label: "LPM", description: "Lakh Per Month" },
+  { value: "LPA", label: "LPA", description: "Lakh Per Annum" },
+  { value: "PerHour", label: "Per Hour", description: "Hourly rate" },
+];
+
+const CURRENCIES = ["INR", "USD", "EUR", "GBP"];
+
+interface RateStructureProps {
+  rateType: RateType | "";
+  rateAmount: string;
+  rateCurrency: string;
+  onRateTypeChange: (v: RateType) => void;
+  onRateAmountChange: (v: string) => void;
+  onRateCurrencyChange: (v: string) => void;
+}
+
+function RateStructure({
+  rateType,
+  rateAmount,
+  rateCurrency,
+  onRateTypeChange,
+  onRateAmountChange,
+  onRateCurrencyChange,
+}: RateStructureProps) {
+  return (
+    <div className="rounded-md border border-border bg-muted/20 p-3 space-y-3">
+      <div>
+        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+          Rate Structure *{" "}
+          <span className="normal-case text-muted-foreground/70">
+            (Choose one)
+          </span>
+        </p>
+        <div className="space-y-2">
+          {RATE_TYPES.map(({ value, label, description }) => (
+            <label
+              key={value}
+              className={[
+                "flex items-center gap-3 p-2.5 rounded-md border cursor-pointer transition-colors duration-150",
+                rateType === value
+                  ? "bg-primary/10 border-primary/40 text-primary"
+                  : "bg-background border-border hover:border-border/80 hover:bg-muted/40 text-foreground",
+              ].join(" ")}
+              data-ocid={`rate-type-${value.toLowerCase()}`}
+            >
+              <input
+                type="radio"
+                name="rateType"
+                value={value}
+                checked={rateType === value}
+                onChange={() => onRateTypeChange(value)}
+                className="sr-only"
+              />
+              <span
+                className={[
+                  "w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0",
+                  rateType === value
+                    ? "border-primary"
+                    : "border-muted-foreground/40",
+                ].join(" ")}
+              >
+                {rateType === value && (
+                  <span className="w-2 h-2 rounded-full bg-primary" />
+                )}
+              </span>
+              <span className="text-xs">
+                <span className="font-semibold">{label}</span>
+                <span className="text-muted-foreground ml-1.5">
+                  ({description})
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {rateType && (
+        <div className="flex gap-2 items-end">
+          <div className="flex-1 space-y-1">
+            <Label className="text-xs">
+              Amount
+              {rateType === "LPM" && " (in Lakhs)"}
+              {rateType === "LPA" && " (in Lakhs)"}
+            </Label>
+            <Input
+              type="number"
+              min={0}
+              step="0.1"
+              value={rateAmount}
+              onChange={(e) => onRateAmountChange(e.target.value)}
+              placeholder={rateType === "PerHour" ? "e.g. 50" : "e.g. 2.5"}
+              className="h-8 text-xs"
+              data-ocid="job-form-rate-amount"
+            />
+          </div>
+          <div className="w-24 space-y-1">
+            <Label className="text-xs">Currency</Label>
+            <Select value={rateCurrency} onValueChange={onRateCurrencyChange}>
+              <SelectTrigger
+                className="h-8 text-xs"
+                data-ocid="job-form-rate-currency"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CURRENCIES.map((c) => (
+                  <SelectItem key={c} value={c} className="text-xs">
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+
+      {rateType && rateAmount && (
+        <p className="text-[10px] text-muted-foreground">
+          {rateType === "LPM" &&
+            `Example: ${rateAmount} LPM = ₹${(Number.parseFloat(rateAmount) * 100000).toLocaleString("en-IN")}/month`}
+          {rateType === "LPA" &&
+            `Example: ${rateAmount} LPA = ₹${(Number.parseFloat(rateAmount) * 100000).toLocaleString("en-IN")}/year`}
+          {rateType === "PerHour" &&
+            `Example: ${rateAmount} ${rateCurrency}/hr`}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -541,9 +777,14 @@ function JobForm({
   const [form, setForm] = useState<JobFormInput>({
     clientId: initial?.clientId ?? "",
     title: initial?.title ?? "",
+    roleSummary: initial?.roleSummary ?? "",
+    responsibilities: initial?.responsibilities ?? "",
+    requiredSkills: initial?.requiredSkills ?? "",
+    experience: initial?.experience ?? "",
     requirements: initial?.requirements ?? "",
-    rateMin: initial?.rateMin ?? undefined,
-    rateMax: initial?.rateMax ?? undefined,
+    rateType: (initial?.rateType as RateType | "") ?? "",
+    rateAmount: initial?.rateAmount ?? "",
+    rateCurrency: initial?.rateCurrency ?? "INR",
     location: initial?.location ?? "",
   });
 
@@ -554,25 +795,36 @@ function JobForm({
     setForm((prev) => ({ ...prev, [name]: value }));
   }
 
-  function handleNumberChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const { name, value } = e.target;
-    setForm((prev) => ({
-      ...prev,
-      [name]: value === "" ? undefined : Number(value),
-    }));
-  }
-
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.clientId || !form.title.trim()) {
-      toast.error("Client and title are required.");
+      toast.error("Client and job title are required.");
+      return;
+    }
+    if (!form.rateType) {
+      toast.error("Please select a rate structure (LPM, LPA, or Per Hour).");
       return;
     }
     onSubmit(form);
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3" data-ocid="job-form">
+    <form onSubmit={handleSubmit} className="space-y-4" data-ocid="job-form">
+      {/* 1. Job Title */}
+      <div className="space-y-1">
+        <Label className="text-xs">Job Title *</Label>
+        <Input
+          name="title"
+          value={form.title}
+          onChange={handleChange}
+          placeholder="e.g. Senior React Developer"
+          className="h-8 text-xs"
+          required
+          data-ocid="job-form-title"
+        />
+      </div>
+
+      {/* 2. Client */}
       <div className="space-y-1">
         <Label className="text-xs">Client *</Label>
         <Select
@@ -591,68 +843,84 @@ function JobForm({
           </SelectContent>
         </Select>
       </div>
+
+      {/* 3. Role Summary */}
       <div className="space-y-1">
-        <Label className="text-xs">Job Title *</Label>
+        <Label className="text-xs">Role Summary</Label>
         <Input
-          name="title"
-          value={form.title}
+          name="roleSummary"
+          value={form.roleSummary ?? ""}
           onChange={handleChange}
-          placeholder="e.g. Senior React Developer"
+          placeholder="One-line description of the role"
           className="h-8 text-xs"
-          required
-          data-ocid="job-form-title"
+          data-ocid="job-form-role-summary"
         />
       </div>
+
+      {/* 4. Responsibilities */}
+      <div className="space-y-1">
+        <Label className="text-xs">Responsibilities</Label>
+        <Textarea
+          name="responsibilities"
+          value={form.responsibilities ?? ""}
+          onChange={handleChange}
+          placeholder="Describe day-to-day responsibilities, key deliverables, team structure, reporting lines..."
+          className="text-xs min-h-[120px]"
+          data-ocid="job-form-responsibilities"
+        />
+      </div>
+
+      {/* 5. Required Skills */}
+      <div className="space-y-1">
+        <Label className="text-xs">Required Skills</Label>
+        <Input
+          name="requiredSkills"
+          value={form.requiredSkills ?? ""}
+          onChange={handleChange}
+          placeholder="e.g. React, TypeScript, Node.js (comma separated)"
+          className="h-8 text-xs"
+          data-ocid="job-form-skills"
+        />
+      </div>
+
+      {/* 6. Experience */}
+      <div className="space-y-1">
+        <Label className="text-xs">Experience Required</Label>
+        <Input
+          name="experience"
+          value={form.experience ?? ""}
+          onChange={handleChange}
+          placeholder="e.g. 3+ years, 5-8 years"
+          className="h-8 text-xs"
+          data-ocid="job-form-experience"
+        />
+      </div>
+
+      {/* 7. Location */}
       <div className="space-y-1">
         <Label className="text-xs">Location</Label>
         <Input
           name="location"
           value={form.location ?? ""}
           onChange={handleChange}
-          placeholder="e.g. Remote, Austin TX"
+          placeholder="e.g. Remote, Bangalore, Austin TX"
           className="h-8 text-xs"
           data-ocid="job-form-location"
         />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs">Rate Min ($/hr)</Label>
-          <Input
-            name="rateMin"
-            type="number"
-            min={0}
-            value={form.rateMin ?? ""}
-            onChange={handleNumberChange}
-            placeholder="45"
-            className="h-8 text-xs"
-            data-ocid="job-form-rate-min"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Rate Max ($/hr)</Label>
-          <Input
-            name="rateMax"
-            type="number"
-            min={0}
-            value={form.rateMax ?? ""}
-            onChange={handleNumberChange}
-            placeholder="85"
-            className="h-8 text-xs"
-            data-ocid="job-form-rate-max"
-          />
-        </div>
-      </div>
-      <div className="space-y-1">
-        <Label className="text-xs">Requirements</Label>
-        <Textarea
-          name="requirements"
-          value={form.requirements ?? ""}
-          onChange={handleChange}
-          placeholder="Skills, experience, qualifications…"
-          className="text-xs min-h-[80px] resize-none"
-          data-ocid="job-form-requirements"
-        />
-      </div>
+
+      {/* 8. Rate Structure */}
+      <RateStructure
+        rateType={form.rateType as RateType | ""}
+        rateAmount={form.rateAmount ?? ""}
+        rateCurrency={form.rateCurrency ?? "INR"}
+        onRateTypeChange={(v) => setForm((p) => ({ ...p, rateType: v }))}
+        onRateAmountChange={(v) => setForm((p) => ({ ...p, rateAmount: v }))}
+        onRateCurrencyChange={(v) =>
+          setForm((p) => ({ ...p, rateCurrency: v }))
+        }
+      />
+
       <div className="flex justify-end gap-2 pt-1">
         <Button
           type="submit"
@@ -687,7 +955,7 @@ function JobRow({
       type="button"
       onClick={onClick}
       className={[
-        "w-full text-left grid grid-cols-[1fr_120px_120px_140px_80px_52px_28px] gap-2 px-3 py-2 text-xs border-b border-border/50 transition-colors cursor-pointer items-center",
+        "w-full text-left grid grid-cols-[1fr_120px_130px_140px_80px_52px_28px] gap-2 px-3 py-2 text-xs border-b border-border/50 transition-colors duration-150 cursor-pointer items-center",
         isSelected
           ? "bg-primary/8 border-l-2 border-l-primary"
           : "hover:bg-muted/30",
@@ -704,8 +972,9 @@ function JobRow({
         )}
       </div>
       <span className="text-muted-foreground truncate">{clientName}</span>
-      <span className="text-muted-foreground truncate">
-        {formatRate(job.rateMin, job.rateMax)}
+      <span className="text-muted-foreground truncate flex items-center gap-0.5">
+        <IndianRupee className="h-3 w-3 flex-shrink-0" />
+        {formatRateDisplay(job)}
       </span>
       <span className="text-muted-foreground truncate">
         {formatDate(job.createdAt)}
@@ -718,12 +987,11 @@ function JobRow({
           {getStatusLabel(job.status)}
         </Badge>
       </div>
-      {/* Share icon */}
       <div className="flex justify-center">
         <button
           type="button"
           onClick={onShare}
-          className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+          className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors duration-150"
           aria-label={`Share ${job.title}`}
           data-ocid="job-row-share-btn"
         >
@@ -762,14 +1030,11 @@ export default function JobsPage() {
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [sharingJob, setSharingJob] = useState<Job | null>(null);
 
-  // Filter
   const filteredJobs =
     statusFilter === "all"
       ? jobs
       : jobs.filter((j) => j.status === statusFilter);
-
   const openCount = jobs.filter((j) => j.status === "open").length;
-
   const selectedJob = jobs.find((j) => j.id === selectedJobId) ?? null;
 
   function handleRowClick(jobId: string) {
@@ -780,7 +1045,7 @@ export default function JobsPage() {
     createJob.mutate(data, {
       onSuccess: () => {
         setShowAddModal(false);
-        toast.success("Job added");
+        toast.success("Job added successfully");
       },
       onError: () => toast.error("Failed to add job"),
     });
@@ -842,7 +1107,7 @@ export default function JobsPage() {
               type="button"
               onClick={() => setStatusFilter(tab.value)}
               className={[
-                "flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors",
+                "flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors duration-150",
                 statusFilter === tab.value
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground",
@@ -899,10 +1164,10 @@ export default function JobsPage() {
           ) : (
             <div>
               {/* Table header */}
-              <div className="grid grid-cols-[1fr_120px_120px_140px_80px_52px_28px] gap-2 px-3 py-1.5 bg-muted/20 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0 z-10">
+              <div className="grid grid-cols-[1fr_120px_130px_140px_80px_52px_28px] gap-2 px-3 py-1.5 bg-muted/20 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0 z-10">
                 <span>Title / Location</span>
                 <span>Client</span>
-                <span>Rate Range</span>
+                <span>Compensation</span>
                 <span>Created</span>
                 <span>Status</span>
                 <span className="text-center">Share</span>
@@ -951,7 +1216,7 @@ export default function JobsPage() {
         onOpenChange={setShowAddModal}
         title="Add Job"
         description="Create a new job order for a client."
-        size="md"
+        size="lg"
       >
         <JobForm
           clients={clients}
@@ -966,7 +1231,7 @@ export default function JobsPage() {
         onOpenChange={(open) => !open && setEditingJob(null)}
         title="Edit Job"
         description="Update job order details."
-        size="md"
+        size="lg"
       >
         {editingJob && (
           <JobForm
@@ -977,6 +1242,14 @@ export default function JobsPage() {
               rateMin: editingJob.rateMin,
               rateMax: editingJob.rateMax,
               location: editingJob.location,
+              roleSummary: editingJob.roleSummary,
+              responsibilities: editingJob.responsibilities,
+              requiredSkills: editingJob.requiredSkills,
+              experience: editingJob.experience,
+              rateType:
+                (editingJob.rateType as "" | "LPM" | "LPA" | "PerHour") ?? "",
+              rateAmount: editingJob.rateAmount,
+              rateCurrency: editingJob.rateCurrency ?? "INR",
             }}
             clients={clients}
             onSubmit={handleEditJob}

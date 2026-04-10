@@ -37,14 +37,14 @@ export function AppModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "bg-card border-border p-0 gap-0",
+          "bg-card text-card-foreground border border-border p-0 gap-0 shadow-elevated",
           SIZE_CLASSES[size],
           className,
         )}
         data-ocid="app-modal"
       >
         <DialogHeader className="px-4 py-3 border-b border-border">
-          <DialogTitle className="text-sm font-semibold text-foreground font-display">
+          <DialogTitle className="text-sm font-semibold text-card-foreground font-display">
             {title}
           </DialogTitle>
           {description && (
@@ -53,7 +53,7 @@ export function AppModal({
             </DialogDescription>
           )}
         </DialogHeader>
-        <div className="px-4 py-4">{children}</div>
+        <div className="px-4 py-4 text-card-foreground">{children}</div>
       </DialogContent>
     </Dialog>
   );

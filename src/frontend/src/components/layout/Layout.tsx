@@ -1,3 +1,4 @@
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { usePendingApprovals } from "@/hooks/use-crm";
@@ -85,7 +86,7 @@ export function Layout({ children }: LayoutProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground"
+              className="h-8 w-8 text-muted-foreground transition-colors duration-150"
               onClick={() => setSidebarOpen(true)}
               aria-label="Open navigation"
               data-ocid="header-menu-toggle"
@@ -104,12 +105,13 @@ export function Layout({ children }: LayoutProps) {
             </p>
           </div>
 
-          {/* Right: search + notifications */}
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Right: theme toggle + search + notifications */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <ThemeToggle />
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground"
+              className="h-8 w-8 text-muted-foreground transition-colors duration-150"
               disabled
               aria-label="Search"
             >
@@ -118,7 +120,7 @@ export function Layout({ children }: LayoutProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground relative"
+              className="h-8 w-8 text-muted-foreground relative transition-colors duration-150"
               aria-label={`${approvalCount} pending approvals`}
               data-ocid="header-notifications"
             >

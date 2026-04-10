@@ -1,12 +1,10 @@
-import type * as React from "react";
-
-import { cn } from "@/lib/utils";
-
-function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
-  return (
-    <textarea
-      data-slot="textarea"
-      className={cn(
+import { j as jsxRuntimeExports, f as cn } from "./index-FQ24AoYk.js";
+function Textarea({ className, ...props }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "textarea",
+    {
+      "data-slot": "textarea",
+      className: cn(
         "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-base text-foreground shadow-xs",
         "placeholder:text-muted-foreground",
         "transition-colors duration-150 outline-none",
@@ -15,11 +13,12 @@ function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
         "aria-invalid:border-destructive aria-invalid:ring-destructive/20",
         "field-sizing-content resize-none",
         "md:text-sm",
-        className,
-      )}
-      {...props}
-    />
+        className
+      ),
+      ...props
+    }
   );
 }
-
-export { Textarea };
+export {
+  Textarea as T
+};

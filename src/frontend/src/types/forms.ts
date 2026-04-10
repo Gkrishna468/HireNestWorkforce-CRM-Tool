@@ -58,10 +58,19 @@ export interface ActivityFormInput {
 export interface JobFormInput {
   clientId: string;
   title: string;
+  // Legacy rate fields (kept for backward compatibility)
   requirements?: string;
   rateMin?: number;
   rateMax?: number;
   location?: string;
+  // New structured fields
+  roleSummary?: string;
+  responsibilities?: string;
+  requiredSkills?: string;
+  experience?: string;
+  rateType: "" | "LPM" | "LPA" | "PerHour";
+  rateAmount?: string;
+  rateCurrency?: string;
 }
 
 export interface SubmissionFormInput {

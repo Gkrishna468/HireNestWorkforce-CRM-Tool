@@ -1,13 +1,11 @@
-import type * as React from "react";
-
-import { cn } from "@/lib/utils";
-
-function Input({ className, type, ...props }: React.ComponentProps<"input">) {
-  return (
-    <input
-      type={type}
-      data-slot="input"
-      className={cn(
+import { j as jsxRuntimeExports, f as cn } from "./index-FQ24AoYk.js";
+function Input({ className, type, ...props }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "input",
+    {
+      type,
+      "data-slot": "input",
+      className: cn(
         "flex h-9 w-full min-w-0 rounded-md border border-input bg-background px-3 py-1 text-base text-foreground shadow-xs",
         "placeholder:text-muted-foreground",
         "transition-colors duration-150 outline-none",
@@ -16,11 +14,12 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
         "file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground",
         "aria-invalid:border-destructive aria-invalid:ring-destructive/20",
         "md:text-sm",
-        className,
-      )}
-      {...props}
-    />
+        className
+      ),
+      ...props
+    }
   );
 }
-
-export { Input };
+export {
+  Input as I
+};

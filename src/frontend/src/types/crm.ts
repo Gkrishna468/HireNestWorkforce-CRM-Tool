@@ -17,6 +17,7 @@ export type FollowUpStatus =
   | "snoozed";
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "snoozed";
 export type JobStatus = "open" | "filled" | "closed" | "on_hold";
+export type RateType = "LPM" | "LPA" | "PerHour";
 export type SubmissionStatus =
   | "pending"
   | "approved"
@@ -130,6 +131,14 @@ export interface Job {
   status: JobStatus;
   createdAt: number;
   filledAt?: number;
+  // New structured fields
+  roleSummary?: string;
+  responsibilities?: string;
+  requiredSkills?: string;
+  experience?: string;
+  rateType?: RateType;
+  rateAmount?: string;
+  rateCurrency?: string;
 }
 
 export interface Submission {
