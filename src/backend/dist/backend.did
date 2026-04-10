@@ -1,0 +1,357 @@
+type VendorMetrics = 
+ record {
+   date: text;
+   id: EntityId;
+   interviewsScheduled: nat;
+   placements: nat;
+   qualityScore: float64;
+   responseTimeHours: float64;
+   submissions: nat;
+   submissionsAccepted: nat;
+   vendorId: EntityId;
+ };
+type Vendor = 
+ record {
+   company: text;
+   contactName: text;
+   createdAt: Timestamp;
+   email: text;
+   healthScore: nat;
+   id: EntityId;
+   lastActivityAt: Timestamp;
+   name: text;
+   notes: text;
+   phone: text;
+   pipelineStage: text;
+   qualityScore: float64;
+   rateMax: float64;
+   rateMin: float64;
+   responseTimeHours: float64;
+   specialty: text;
+   status: text;
+   submissions: nat;
+   submissionsAccepted: nat;
+ };
+type Timestamp = int;
+type Submission = 
+ record {
+   approvedAt: opt Timestamp;
+   approvedBy: opt text;
+   candidateId: EntityId;
+   id: EntityId;
+   jobId: EntityId;
+   rateProposed: float64;
+   status: text;
+   submittedAt: Timestamp;
+   submittedBy: text;
+   vendorId: opt EntityId;
+ };
+type RecruiterSummary = 
+ record {
+   callsToday: nat;
+   flagged: bool;
+   name: text;
+   productivityScore: nat;
+   recruiterId: EntityId;
+   submissionsToday: nat;
+ };
+type RecruiterMetrics = 
+ record {
+   callsMade: nat;
+   date: text;
+   emailsSent: nat;
+   id: EntityId;
+   interviewsScheduled: nat;
+   notes: text;
+   productivityScore: nat;
+   recruiterId: EntityId;
+   submissions: nat;
+   tasksCompleted: nat;
+ };
+type Recruiter = 
+ record {
+   callsToday: nat;
+   createdAt: Timestamp;
+   email: text;
+   emailsToday: nat;
+   healthScore: nat;
+   id: EntityId;
+   interviewsScheduled: nat;
+   lastActivityAt: Timestamp;
+   name: text;
+   phone: text;
+   pipelineStage: text;
+   productivityScore: nat;
+   submissionsToday: nat;
+   tasksCompleted: nat;
+ };
+type PulseRow = 
+ record {
+   actionNeeded: text;
+   entityId: EntityId;
+   entityName: text;
+   entityType: EntityType;
+   healthScore: nat;
+   healthStatus: HealthStatus;
+   lastActivityAt: Timestamp;
+   pipelineStage: text;
+ };
+type PulseDashboard = 
+ record {
+   generatedAt: Timestamp;
+   rows: vec PulseRow;
+ };
+type PipelineStage = 
+ record {
+   entityType: EntityType;
+   requiresApproval: bool;
+   slaHours: nat;
+   stageName: text;
+   stageOrder: nat;
+ };
+type MorningBriefing = 
+ record {
+   aiSuggestions: vec text;
+   clientInterviewsToday: nat;
+   date: text;
+   generatedAt: Timestamp;
+   pendingApprovals: nat;
+   pendingOfferApprovals: nat;
+   recruiterSummaries: vec RecruiterSummary;
+   staleCandidates: nat;
+   vendorFollowUps: nat;
+ };
+type Job = 
+ record {
+   clientId: EntityId;
+   createdAt: Timestamp;
+   filledAt: opt Timestamp;
+   id: EntityId;
+   rateMax: float64;
+   rateMin: float64;
+   requirements: text;
+   status: text;
+   title: text;
+ };
+type HealthStatus = 
+ variant {
+   green;
+   red;
+   yellow;
+ };
+type FollowUp = 
+ record {
+   approvedAt: opt Timestamp;
+   approvedBy: opt text;
+   createdAt: Timestamp;
+   entityId: EntityId;
+   entityType: EntityType;
+   id: EntityId;
+   sentAt: opt Timestamp;
+   snoozedUntil: opt Timestamp;
+   status: text;
+   suggestedAction: text;
+   suggestedMessage: text;
+   triggerReason: text;
+ };
+type EntityType = 
+ variant {
+   candidate;
+   client;
+   recruiter;
+   vendor;
+ };
+type EntityId = text;
+type Client = 
+ record {
+   budget: float64;
+   churnRisk: text;
+   company: text;
+   createdAt: Timestamp;
+   email: text;
+   healthScore: nat;
+   hiringManager: text;
+   id: EntityId;
+   lastActivityAt: Timestamp;
+   name: text;
+   notes: text;
+   phone: text;
+   pipelineStage: text;
+   timeline: text;
+ };
+type Candidate = 
+ record {
+   availability: text;
+   createdAt: Timestamp;
+   daysInStage: nat;
+   email: text;
+   experience: text;
+   healthScore: nat;
+   id: EntityId;
+   lastActivityAt: Timestamp;
+   lastContact: Timestamp;
+   name: text;
+   phone: text;
+   pipelineStage: text;
+   placementProbability: nat;
+   salaryExpectation: float64;
+   skills: text;
+   source: text;
+ };
+type BenchRecordInput = 
+ record {
+   candidateName: text;
+   experience: text;
+   rate: float64;
+   role: text;
+   skill: text;
+   vendorName: text;
+ };
+type BenchRecord = 
+ record {
+   candidateName: text;
+   experience: text;
+   id: nat;
+   importedAt: Timestamp;
+   rate: float64;
+   role: text;
+   skill: text;
+   vendorName: text;
+ };
+type BenchMatch = 
+ record {
+   candidateName: text;
+   experience: text;
+   id: nat;
+   importedAt: Timestamp;
+   matchScore: float64;
+   rate: float64;
+   role: text;
+   skill: text;
+   vendorName: text;
+ };
+type ApprovalItem = 
+ record {
+   approvedAt: opt Timestamp;
+   approvedBy: opt text;
+   description: text;
+   details: text;
+   entityId: EntityId;
+   entityName: text;
+   entityType: EntityType;
+   id: EntityId;
+   itemType: text;
+   notes: opt text;
+   requestedAt: Timestamp;
+   requestedBy: text;
+   snoozedUntil: opt Timestamp;
+   status: text;
+ };
+type Activity = 
+ record {
+   activityType: text;
+   approvedAt: opt Timestamp;
+   approvedBy: opt text;
+   createdAt: Timestamp;
+   createdBy: text;
+   direction: text;
+   entityId: EntityId;
+   entityType: EntityType;
+   id: EntityId;
+   notes: text;
+   requiresApproval: bool;
+ };
+service : {
+  approveItem: (id: text, approvedBy: text) -> (bool);
+  createApprovalItem: (itemType: text, entityId: text, entityType:
+   EntityType, entityName: text, description: text, details: text,
+   requestedBy: text) -> (ApprovalItem);
+  createCandidate: (name: text, email: text, phone: text, skills: text,
+   experience: text, source: text, salaryExpectation: float64, availability:
+   text) -> (Candidate);
+  createClient: (name: text, company: text, hiringManager: text, email: 
+   text, phone: text, budget: float64, timeline: text, notes: text) ->
+   (Client);
+  createFollowUp: (entityId: text, entityType: EntityType, triggerReason:
+   text, suggestedAction: text, suggestedMessage: text) -> (FollowUp);
+  createJob: (clientId: text, title: text, requirements: text, rateMin:
+   float64, rateMax: float64) -> (Job);
+  createRecruiter: (name: text, email: text, phone: text) -> (Recruiter);
+  createSubmission: (candidateId: text, jobId: text, vendorId: opt text,
+   submittedBy: text, rateProposed: float64) -> (Submission);
+  createVendor: (name: text, company: text, contactName: text, email: 
+   text, phone: text, specialty: text, rateMin: float64, rateMax: float64,
+   notes: text) -> (Vendor);
+  deleteBenchRecord: (id: nat) -> (variant {
+                                     err: text;
+                                     ok: bool;
+                                   });
+  deleteCandidate: (id: text) -> (bool);
+  deleteClient: (id: text) -> (bool);
+  deleteRecruiter: (id: text) -> (bool);
+  deleteVendor: (id: text) -> (bool);
+  getActivitiesForEntity: (entityId: text) -> (vec Activity) query;
+  getAllActivities: () -> (vec Activity) query;
+  getCandidate: (id: text) -> (opt Candidate) query;
+  getClient: (id: text) -> (opt Client) query;
+  getJob: (id: text) -> (opt Job) query;
+  getMorningBriefing: () -> (MorningBriefing) query;
+  getPipelineStages: (entityType: EntityType) -> (vec PipelineStage) query;
+  getPulseDashboard: () -> (PulseDashboard) query;
+  getRecruiter: (id: text) -> (opt Recruiter) query;
+  getRecruiterMetrics: (recruiterId: text, date: text) ->
+   (opt RecruiterMetrics) query;
+  getRecruiterMetricsHistory: (recruiterId: text) ->
+   (vec RecruiterMetrics) query;
+  getVendor: (id: text) -> (opt Vendor) query;
+  getVendorMetrics: (vendorId: text, date: text) -> (opt VendorMetrics) query;
+  listApprovalHistory: () -> (vec ApprovalItem) query;
+  listBench: (vendorFilter: opt text, roleFilter: opt text, skillFilter:
+   opt text) -> (vec BenchRecord) query;
+  listCandidates: () -> (vec Candidate) query;
+  listClients: () -> (vec Client) query;
+  listFollowUps: () -> (vec FollowUp) query;
+  listJobs: () -> (vec Job) query;
+  listJobsForClient: (clientId: text) -> (vec Job) query;
+  listPendingApprovals: () -> (vec ApprovalItem) query;
+  listPendingFollowUps: () -> (vec FollowUp) query;
+  listRecruiters: () -> (vec Recruiter) query;
+  listSubmissions: () -> (vec Submission) query;
+  listSubmissionsForCandidate: (candidateId: text) -> (vec Submission) query;
+  listSubmissionsForJob: (jobId: text) -> (vec Submission) query;
+  listVendors: () -> (vec Vendor) query;
+  logActivity: (entityId: text, entityType: EntityType, activityType: 
+   text, direction: text, notes: text, createdBy: text, requiresApproval:
+   bool) -> (Activity);
+  logRecruiterMetrics: (recruiterId: text, date: text, callsMade: nat,
+   emailsSent: nat, submissions: nat, interviewsScheduled: nat,
+   tasksCompleted: nat, productivityScore: nat, notes: text) ->
+   (RecruiterMetrics);
+  logVendorMetrics: (vendorId: text, date: text, submissions: nat,
+   submissionsAccepted: nat, interviewsScheduled: nat, placements: nat,
+   responseTimeHours: float64, qualityScore: float64) -> (VendorMetrics);
+  matchBench: (jobId: text) -> (vec BenchMatch) query;
+  rejectItem: (id: text, rejectedBy: text, notes: text) -> (bool);
+  runFollowUpEngine: () -> (nat);
+  seedSampleData: () -> (text);
+  snoozeItem: (id: text, snoozedUntil: int) -> (bool);
+  updateApprovalItem: (updated: ApprovalItem) -> (bool);
+  updateCandidate: (updated: Candidate) -> (bool);
+  updateClient: (updated: Client) -> (bool);
+  updateEntityStage: (entityId: text, entityType: EntityType, newStage: 
+   text, requestedBy: text) -> (variant {
+                                  ok;
+                                  requiresApproval: text;
+                                });
+  updateFollowUpStatus: (id: text, status: text, approvedBy: opt text,
+   snoozedUntil: opt int) -> (bool);
+  updateJob: (updated: Job) -> (bool);
+  updateRecruiter: (updated: Recruiter) -> (bool);
+  updateSubmission: (updated: Submission) -> (bool);
+  updateVendor: (updated: Vendor) -> (bool);
+  uploadBenchRecords: (records: vec BenchRecordInput) ->
+   (variant {
+      err: text;
+      ok: nat;
+    });
+}

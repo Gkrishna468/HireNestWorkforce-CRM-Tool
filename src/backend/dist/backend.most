@@ -1,0 +1,268 @@
+// Version: 1.0.0
+type Activity__481333239 =
+  {
+    activityType : Text;
+    approvedAt : ?Timestamp__484788618;
+    approvedBy : ?Text;
+    createdAt : Timestamp__484788618;
+    createdBy : Text;
+    direction : Text;
+    entityId : EntityId__970249480;
+    entityType : EntityType__95654033;
+    id : EntityId__970249480;
+    notes : Text;
+    requiresApproval : Bool
+  };
+type ApprovalItem__425259888 =
+  {
+    approvedAt : ?Timestamp__484788618;
+    approvedBy : ?Text;
+    description : Text;
+    details : Text;
+    entityId : EntityId__970249480;
+    entityName : Text;
+    entityType : EntityType__95654033;
+    id : EntityId__970249480;
+    itemType : Text;
+    notes : ?Text;
+    requestedAt : Timestamp__484788618;
+    requestedBy : Text;
+    snoozedUntil : ?Timestamp__484788618;
+    status : Text
+  };
+type BenchRecord__352649880 =
+  {
+    candidateName : Text;
+    experience : Text;
+    id : Nat;
+    importedAt : Timestamp__484788618;
+    rate : Float;
+    role : Text;
+    skill : Text;
+    vendorName : Text
+  };
+type Candidate__805010502 =
+  {
+    availability : Text;
+    createdAt : Timestamp__484788618;
+    daysInStage : Nat;
+    email : Text;
+    experience : Text;
+    healthScore : Nat;
+    id : EntityId__970249480;
+    lastActivityAt : Timestamp__484788618;
+    lastContact : Timestamp__484788618;
+    name : Text;
+    phone : Text;
+    pipelineStage : Text;
+    placementProbability : Nat;
+    salaryExpectation : Float;
+    skills : Text;
+    source : Text
+  };
+type Client__867095841 =
+  {
+    budget : Float;
+    churnRisk : Text;
+    company : Text;
+    createdAt : Timestamp__484788618;
+    email : Text;
+    healthScore : Nat;
+    hiringManager : Text;
+    id : EntityId__970249480;
+    lastActivityAt : Timestamp__484788618;
+    name : Text;
+    notes : Text;
+    phone : Text;
+    pipelineStage : Text;
+    timeline : Text
+  };
+type Data__791452850<K, V> =
+  {var count : Nat__490723111; kvs : [var ?(K, V)]};
+type EntityId__892221652 = Text;
+type EntityId__970249480 = EntityId__892221652;
+type EntityType__486211478 = {#candidate; #client; #recruiter; #vendor};
+type EntityType__95654033 = EntityType__486211478;
+type FollowUp__622386448 =
+  {
+    approvedAt : ?Timestamp__484788618;
+    approvedBy : ?Text;
+    createdAt : Timestamp__484788618;
+    entityId : EntityId__970249480;
+    entityType : EntityType__95654033;
+    id : EntityId__970249480;
+    sentAt : ?Timestamp__484788618;
+    snoozedUntil : ?Timestamp__484788618;
+    status : Text;
+    suggestedAction : Text;
+    suggestedMessage : Text;
+    triggerReason : Text
+  };
+type Internal__8484328<K, V> =
+  {children : [var ?Node__46230540<K, V>]; data : Data__791452850<K, V>};
+type Job__351843346 =
+  {
+    clientId : EntityId__970249480;
+    createdAt : Timestamp__484788618;
+    filledAt : ?Timestamp__484788618;
+    id : EntityId__970249480;
+    rateMax : Float;
+    rateMin : Float;
+    requirements : Text;
+    status : Text;
+    title : Text
+  };
+type Leaf__809889148<K, V> = {data : Data__791452850<K, V>};
+type Nat__490723111 = Nat__920180692;
+type Nat__920180692 = Nat;
+type Node__46230540<K, V> =
+  {#internal : Internal__8484328<K, V>; #leaf : Leaf__809889148<K, V>};
+type RecruiterMetrics__279093250 =
+  {
+    callsMade : Nat;
+    date : Text;
+    emailsSent : Nat;
+    id : EntityId__970249480;
+    interviewsScheduled : Nat;
+    notes : Text;
+    productivityScore : Nat;
+    recruiterId : EntityId__970249480;
+    submissions : Nat;
+    tasksCompleted : Nat
+  };
+type Recruiter__456075536 =
+  {
+    callsToday : Nat;
+    createdAt : Timestamp__484788618;
+    email : Text;
+    emailsToday : Nat;
+    healthScore : Nat;
+    id : EntityId__970249480;
+    interviewsScheduled : Nat;
+    lastActivityAt : Timestamp__484788618;
+    name : Text;
+    phone : Text;
+    pipelineStage : Text;
+    productivityScore : Nat;
+    submissionsToday : Nat;
+    tasksCompleted : Nat
+  };
+type Submission__998287609 =
+  {
+    approvedAt : ?Timestamp__484788618;
+    approvedBy : ?Text;
+    candidateId : EntityId__970249480;
+    id : EntityId__970249480;
+    jobId : EntityId__970249480;
+    rateProposed : Float;
+    status : Text;
+    submittedAt : Timestamp__484788618;
+    submittedBy : Text;
+    vendorId : ?EntityId__970249480
+  };
+type Timestamp__301639476 = Int;
+type Timestamp__484788618 = Timestamp__301639476;
+type VendorMetrics__322375507 =
+  {
+    date : Text;
+    id : EntityId__970249480;
+    interviewsScheduled : Nat;
+    placements : Nat;
+    qualityScore : Float;
+    responseTimeHours : Float;
+    submissions : Nat;
+    submissionsAccepted : Nat;
+    vendorId : EntityId__970249480
+  };
+type Vendor__315102645 =
+  {
+    company : Text;
+    contactName : Text;
+    createdAt : Timestamp__484788618;
+    email : Text;
+    healthScore : Nat;
+    id : EntityId__970249480;
+    lastActivityAt : Timestamp__484788618;
+    name : Text;
+    notes : Text;
+    phone : Text;
+    pipelineStage : Text;
+    qualityScore : Float;
+    rateMax : Float;
+    rateMin : Float;
+    responseTimeHours : Float;
+    specialty : Text;
+    status : Text;
+    submissions : Nat;
+    submissionsAccepted : Nat
+  };
+actor {
+  stable activities :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?Activity__481333239]];
+      var elementIndex : Nat__490723111
+    };
+  stable approvals :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?ApprovalItem__425259888]];
+      var elementIndex : Nat__490723111
+    };
+  stable benchCounter : [var Nat];
+  stable benchRecords :
+    {
+      var root : Node__46230540<Nat, BenchRecord__352649880>;
+      var size : Nat__490723111
+    };
+  stable candidates :
+    {
+      var root : Node__46230540<Text, Candidate__805010502>;
+      var size : Nat__490723111
+    };
+  stable clients :
+    {
+      var root : Node__46230540<Text, Client__867095841>;
+      var size : Nat__490723111
+    };
+  stable followUps :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?FollowUp__622386448]];
+      var elementIndex : Nat__490723111
+    };
+  stable var idCounter : Nat;
+  stable jobs :
+    {
+      var root : Node__46230540<Text, Job__351843346>;
+      var size : Nat__490723111
+    };
+  stable recruiterMetrics :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?RecruiterMetrics__279093250]];
+      var elementIndex : Nat__490723111
+    };
+  stable recruiters :
+    {
+      var root : Node__46230540<Text, Recruiter__456075536>;
+      var size : Nat__490723111
+    };
+  stable submissions :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?Submission__998287609]];
+      var elementIndex : Nat__490723111
+    };
+  stable vendorMetrics :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?VendorMetrics__322375507]];
+      var elementIndex : Nat__490723111
+    };
+  stable vendors :
+    {
+      var root : Node__46230540<Text, Vendor__315102645>;
+      var size : Nat__490723111
+    }
+};
