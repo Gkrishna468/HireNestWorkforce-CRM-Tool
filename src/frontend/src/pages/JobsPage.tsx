@@ -22,6 +22,7 @@ import {
   useJobs,
   useMatchBench,
   useUpdateJob,
+  useUpdateJobStatus,
 } from "@/hooks/use-crm";
 import type { BenchMatch, Client, Job, JobStatus } from "@/types/crm";
 import type { JobFormInput } from "@/types/forms";
@@ -1114,11 +1115,24 @@ function JobDetailPanel({
   onClose: () => void;
 }) {
   const [shareOpen, setShareOpen] = useState(false);
+  const updateJobStatus = useUpdateJobStatus();
 
   const clientName =
     job.clientName ||
     clients.find((c) => c.id === job.clientId)?.name ||
     "Unknown Client";
+
+  function handleToggleStatus() {
+    const newStatus = job.status === "closed" ? "open" : "closed";
+    updateJobStatus.mutate(
+      { id: job.id, status: newStatus },
+      {
+        onSuccess: () =>
+          toast.success(newStatus === "closed" ? "Job closed" : "Job reopened"),
+        onError: () => toast.error("Failed to update job status"),
+      },
+    );
+  }
 
   return (
     <>
@@ -1154,6 +1168,17 @@ function JobDetailPanel({
               data-ocid="job-edit-btn"
             >
               Edit
+            </Button>
+            <Button
+              variant={job.status === "closed" ? "outline" : "ghost"}
+              size="sm"
+              className={`h-7 text-xs ${job.status === "closed" ? "text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-700 dark:hover:bg-emerald-900/20" : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"}`}
+              onClick={handleToggleStatus}
+              disabled={updateJobStatus.isPending}
+              data-ocid="job-toggle-status-btn"
+              aria-label={job.status === "closed" ? "Reopen job" : "Close job"}
+            >
+              {job.status === "closed" ? "Reopen" : "Close"}
             </Button>
             <Button
               variant="ghost"

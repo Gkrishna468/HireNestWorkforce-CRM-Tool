@@ -472,6 +472,21 @@ export function useUpdateJob() {
   });
 }
 
+export function useUpdateJobStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      status,
+    }: { id: string; status: "open" | "filled" | "closed" | "on_hold" }) => {
+      checkSupabaseOrThrow();
+      return api.updateJobStatus(null, id, status);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK.jobs }),
+    onError: handleMutationError,
+  });
+}
+
 // ── Submissions ───────────────────────────────────────────────────────────────
 
 export function useSubmissions() {

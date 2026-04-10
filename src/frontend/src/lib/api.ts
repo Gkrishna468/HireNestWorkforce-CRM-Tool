@@ -211,6 +211,17 @@ function mapApprovalRow(r: any): ApprovalItem {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapJobRow(r: any): Job {
+  // Parse required_skills: stored as comma-separated string, returned as string[]
+  let requiredSkills: string | undefined = undefined;
+  const rawSkills = r.required_skills ?? r.requiredSkills;
+  if (rawSkills) {
+    if (Array.isArray(rawSkills)) {
+      requiredSkills = rawSkills.join(", ");
+    } else {
+      requiredSkills = safeString(rawSkills);
+    }
+  }
+
   return {
     id: safeString(r.id),
     clientId: safeString(r.client_id ?? r.clientId ?? ""),
@@ -223,6 +234,14 @@ function mapJobRow(r: any): Job {
     status: (r.status ?? "open") as Job["status"],
     createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
     filledAt: r.filled_at ? new Date(r.filled_at).getTime() : undefined,
+    // Structured JD fields
+    roleSummary: r.role_summary ?? r.roleSummary ?? undefined,
+    responsibilities: r.responsibilities ?? undefined,
+    requiredSkills,
+    experience: r.experience ?? undefined,
+    rateType: r.rate_type ?? r.rateType ?? undefined,
+    rateAmount: r.rate_amount != null ? safeString(r.rate_amount) : undefined,
+    rateCurrency: r.rate_currency ?? r.rateCurrency ?? undefined,
   };
 }
 
@@ -611,12 +630,26 @@ export async function createJob(
   _actor: Actor,
   input: JobFormInput,
 ): Promise<Job> {
+  // Normalize requiredSkills: always store as comma-separated string
+  const requiredSkills = Array.isArray(input.requiredSkills)
+    ? (input.requiredSkills as string[]).join(", ")
+    : (input.requiredSkills ?? null);
+
   const row = await supabaseInsert<Record<string, unknown>>("jobs", {
     title: input.title,
     client_id: input.clientId ?? null,
     description: input.requirements ?? null,
     rate: input.rateMax ?? null,
+    location: input.location ?? null,
     status: "open",
+    // Structured JD fields
+    role_summary: input.roleSummary ?? null,
+    responsibilities: input.responsibilities ?? null,
+    required_skills: requiredSkills,
+    experience: input.experience ?? null,
+    rate_type: input.rateType ?? null,
+    rate_amount: input.rateAmount ?? null,
+    rate_currency: input.rateCurrency ?? null,
   });
   return mapJobRow(row);
 }
@@ -628,14 +661,40 @@ export async function updateJob(
 ): Promise<Job> {
   const data: Record<string, unknown> = {};
   if (input.title !== undefined) data.title = input.title;
+  if (input.clientId !== undefined) data.client_id = input.clientId;
   if (input.requirements !== undefined) data.description = input.requirements;
   if (input.rateMax !== undefined) data.rate = input.rateMax;
+  if (input.location !== undefined) data.location = input.location;
+  // Structured JD fields
+  if (input.roleSummary !== undefined) data.role_summary = input.roleSummary;
+  if (input.responsibilities !== undefined)
+    data.responsibilities = input.responsibilities;
+  if (input.requiredSkills !== undefined) {
+    data.required_skills = Array.isArray(input.requiredSkills)
+      ? (input.requiredSkills as string[]).join(", ")
+      : input.requiredSkills;
+  }
+  if (input.experience !== undefined) data.experience = input.experience;
+  if (input.rateType !== undefined) data.rate_type = input.rateType;
+  if (input.rateAmount !== undefined) data.rate_amount = input.rateAmount;
+  if (input.rateCurrency !== undefined) data.rate_currency = input.rateCurrency;
   const row = await supabaseUpdate<Record<string, unknown>>("jobs", id, data);
   return mapJobRow(row);
 }
 
 export async function deleteJob(_actor: Actor, id: string): Promise<void> {
   await supabaseDelete("jobs", id);
+}
+
+export async function updateJobStatus(
+  _actor: Actor,
+  id: string,
+  status: "open" | "filled" | "closed" | "on_hold",
+): Promise<Job> {
+  const row = await supabaseUpdate<Record<string, unknown>>("jobs", id, {
+    status,
+  });
+  return mapJobRow(row);
 }
 
 // ── Submissions ───────────────────────────────────────────────────────────────
