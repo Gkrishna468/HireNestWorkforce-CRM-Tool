@@ -1,7 +1,7 @@
 /**
- * API layer wrapping the backend actor calls.
- * Since bindgen hasn't populated the actor yet, we use a mock-safe approach
- * that will work once the backend methods are deployed.
+ * API layer — all entity CRUD goes to Supabase REST API.
+ * Non-entity calls (pipeline stages, follow-ups, metrics, pulse dashboard, etc.)
+ * still use the Motoko actor as a fallback/stub.
  */
 import type {
   Activity,
@@ -38,6 +38,13 @@ import type {
   VendorFormInput,
   VendorMetricsFormInput,
 } from "../types/forms";
+import {
+  supabaseBatchInsert,
+  supabaseDelete,
+  supabaseInsert,
+  supabaseSelect,
+  supabaseUpdate,
+} from "./supabase";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Actor = any;
@@ -53,714 +60,819 @@ function safeString(val: unknown): string {
   return String(val);
 }
 
-function optVal<T>(opt: [T] | [] | null | undefined): T | undefined {
-  if (Array.isArray(opt) && opt.length > 0) return opt[0];
-  return undefined;
+// ── Row → domain mappers ─────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapVendorRow(r: any): Vendor {
+  return {
+    id: safeString(r.id),
+    name: safeString(r.name),
+    email: safeString(r.email),
+    phone: r.phone ?? undefined,
+    company: r.company ?? undefined,
+    linkedinUrl: r.linkedin_url ?? r.linkedinUrl ?? undefined,
+    currentStage: safeString(
+      r.stage ?? r.current_stage ?? r.currentStage ?? "Discovery",
+    ),
+    healthScore: safeNumber(r.health_score ?? r.healthScore ?? 50),
+    status: safeString(r.status ?? "active"),
+    specialty: r.specialty ?? undefined,
+    notes: r.notes ?? undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapClientRow(r: any): Client {
+  return {
+    id: safeString(r.id),
+    name: safeString(r.name),
+    email: safeString(r.email),
+    phone: r.phone ?? undefined,
+    company: r.company ?? undefined,
+    linkedinUrl: r.linkedin_url ?? r.linkedinUrl ?? undefined,
+    currentStage: safeString(
+      r.stage ?? r.current_stage ?? r.currentStage ?? "Prospect",
+    ),
+    healthScore: safeNumber(r.health_score ?? r.healthScore ?? 50),
+    status: safeString(r.status ?? "active"),
+    industry: r.industry ?? undefined,
+    website: r.website ?? undefined,
+    notes: r.notes ?? undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapRecruiterRow(r: any): Recruiter {
+  return {
+    id: safeString(r.id),
+    name: safeString(r.name),
+    email: safeString(r.email),
+    phone: r.phone ?? undefined,
+    currentStage: safeString(
+      r.stage ?? r.current_stage ?? r.currentStage ?? "Active",
+    ),
+    healthScore: safeNumber(r.health_score ?? r.healthScore ?? 50),
+    status: safeString(r.status ?? "active"),
+    title: r.title ?? undefined,
+    notes: r.notes ?? undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapCandidateRow(r: any): Candidate {
+  return {
+    id: safeString(r.id),
+    name: safeString(r.name),
+    email: safeString(r.email),
+    phone: r.phone ?? undefined,
+    linkedinUrl: r.linkedin_url ?? r.linkedinUrl ?? undefined,
+    currentStage: safeString(
+      r.stage ?? r.current_stage ?? r.currentStage ?? "Applied",
+    ),
+    healthScore: safeNumber(r.health_score ?? r.healthScore ?? 50),
+    status: safeString(r.status ?? "active"),
+    title: r.role ?? r.title ?? undefined,
+    skills: r.skills ?? undefined,
+    salaryMin: r.salary_min != null ? safeNumber(r.salary_min) : undefined,
+    salaryMax: r.salary_max != null ? safeNumber(r.salary_max) : undefined,
+    notes: r.notes ?? r.experience ?? undefined,
+    assignedRecruiter: r.assigned_recruiter ?? r.assignedRecruiter ?? undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapBenchRow(r: any, index: number): BenchRecord {
+  const uuid = safeString(r.id);
+  const numericId = index + 1;
+  _benchUUIDMap.set(numericId, uuid);
+  return {
+    id: numericId,
+    vendorName: safeString(r.vendor_name ?? r.vendorName),
+    candidateName: safeString(r.candidate_name ?? r.candidateName),
+    role: safeString(r.role),
+    experience: safeString(r.experience),
+    skill: safeString(r.skills ?? r.skill),
+    rate: Number(r.rate ?? 0),
+    importedAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapActivityRow(r: any): Activity {
+  return {
+    id: safeString(r.id),
+    entityId: safeString(r.entity_id ?? r.entityId),
+    activityType: (r.activity_type ??
+      r.activityType ??
+      "note") as Activity["activityType"],
+    direction: r.direction ?? undefined,
+    notes: r.description ?? r.notes ?? undefined,
+    createdBy: r.created_by ?? r.createdBy ?? undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapApprovalRow(r: any): ApprovalItem {
+  return {
+    id: safeString(r.id),
+    entityId: safeString(r.entity_id ?? r.entityId),
+    entityName: r.entity_name ?? r.entityName ?? undefined,
+    entityType: r.entity_type ?? r.entityType ?? undefined,
+    itemType: safeString(r.action ?? r.item_type ?? r.itemType ?? ""),
+    description: safeString(r.notes ?? r.description ?? ""),
+    details: r.details ?? undefined,
+    requestedBy: r.requested_by ?? r.requestedBy ?? undefined,
+    status: (r.status ?? "pending") as ApprovalStatus,
+    approvedBy: r.reviewed_by ?? r.approved_by ?? r.approvedBy ?? undefined,
+    approvedAt:
+      r.updated_at && r.status === "approved"
+        ? new Date(r.updated_at).getTime()
+        : undefined,
+    rejectedBy:
+      r.status === "rejected" ? (r.reviewed_by ?? undefined) : undefined,
+    rejectedAt:
+      r.updated_at && r.status === "rejected"
+        ? new Date(r.updated_at).getTime()
+        : undefined,
+    rejectionNotes: undefined,
+    snoozedUntil: undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapJobRow(r: any): Job {
+  return {
+    id: safeString(r.id),
+    clientId: safeString(r.client_id ?? r.clientId ?? ""),
+    clientName: r.client_name ?? r.clientName ?? undefined,
+    title: safeString(r.title),
+    requirements: r.description ?? r.requirements ?? undefined,
+    rateMin: r.rate_min != null ? safeNumber(r.rate_min) : undefined,
+    rateMax: r.rate_max != null ? safeNumber(r.rate_max) : undefined,
+    location: r.location ?? undefined,
+    status: (r.status ?? "open") as Job["status"],
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    filledAt: r.filled_at ? new Date(r.filled_at).getTime() : undefined,
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapSubmissionRow(r: any): Submission {
+  return {
+    id: safeString(r.id),
+    candidateId: safeString(r.candidate_id ?? r.candidateId ?? ""),
+    candidateName: r.candidate_name ?? r.candidateName ?? undefined,
+    jobId: safeString(r.job_id ?? r.jobId ?? ""),
+    jobTitle: r.job_title ?? r.jobTitle ?? undefined,
+    vendorId: r.vendor_id ?? r.vendorId ?? undefined,
+    submittedBy: r.submitted_by ?? r.submittedBy ?? undefined,
+    rateProposed:
+      r.rate_proposed != null ? safeNumber(r.rate_proposed) : undefined,
+    status: (r.status ?? "pending") as SubmissionStatus,
+    submittedAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+    approvedBy: r.approved_by ?? r.approvedBy ?? undefined,
+  };
 }
 
 // ── Vendors ──────────────────────────────────────────────────────────────────
 
-export async function getVendors(actor: Actor): Promise<Vendor[]> {
-  const result = await actor.listVendors();
-  return (result || []).map(mapVendor);
+export async function getVendors(_actor: Actor): Promise<Vendor[]> {
+  const rows = await supabaseSelect("vendors", undefined, {
+    order: "created_at.desc",
+  });
+  return rows.map(mapVendorRow);
 }
 
 export async function getVendor(
-  actor: Actor,
+  _actor: Actor,
   id: string,
 ): Promise<Vendor | null> {
-  const result = await actor.getVendor(id);
-  if (!result || (Array.isArray(result) && result.length === 0)) return null;
-  const val = Array.isArray(result) ? result[0] : result;
-  return mapVendor(val);
+  const rows = await supabaseSelect("vendors", { id });
+  if (!rows.length) return null;
+  return mapVendorRow(rows[0]);
 }
 
 export async function createVendor(
-  actor: Actor,
+  _actor: Actor,
   input: VendorFormInput,
 ): Promise<Vendor> {
-  // Backend: createVendor(name, company, contactName, email, phone, specialty, rateMin, rateMax, notes)
-  // Form: input.name = contact person name, input.company = company/vendor name
-  const vendorName = input.company?.trim() || input.name;
-  const result = await actor.createVendor(
-    vendorName,
-    input.company ?? "",
-    input.name,
-    input.email,
-    input.phone ?? "",
-    input.specialty ?? "",
-    0,
-    0,
-    input.notes ?? "",
-  );
-  return mapVendor(result);
+  const row = await supabaseInsert<Record<string, unknown>>("vendors", {
+    name: input.name,
+    email: input.email,
+    phone: input.phone ?? null,
+    company: input.company ?? null,
+    notes: input.notes ?? null,
+    specialty: input.specialty ?? null,
+    status: "active",
+    stage: "Discovery",
+    health_score: 50,
+  });
+  return mapVendorRow(row);
 }
 
 export async function updateVendor(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   input: Partial<VendorFormInput>,
 ): Promise<Vendor> {
-  const result = await actor.updateVendor(id, input);
-  return mapVendor(result);
+  const data: Record<string, unknown> = {};
+  if (input.name !== undefined) data.name = input.name;
+  if (input.email !== undefined) data.email = input.email;
+  if (input.phone !== undefined) data.phone = input.phone;
+  if (input.company !== undefined) data.company = input.company;
+  if (input.notes !== undefined) data.notes = input.notes;
+  if (input.specialty !== undefined) data.specialty = input.specialty;
+  const row = await supabaseUpdate<Record<string, unknown>>(
+    "vendors",
+    id,
+    data,
+  );
+  return mapVendorRow(row);
 }
 
-export async function deleteVendor(actor: Actor, id: string): Promise<void> {
-  await actor.deleteVendor(id);
+export async function deleteVendor(_actor: Actor, id: string): Promise<void> {
+  await supabaseDelete("vendors", id);
 }
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
-export async function getClients(actor: Actor): Promise<Client[]> {
-  const result = await actor.listClients();
-  return (result || []).map(mapClient);
+export async function getClients(_actor: Actor): Promise<Client[]> {
+  const rows = await supabaseSelect("clients", undefined, {
+    order: "created_at.desc",
+  });
+  return rows.map(mapClientRow);
 }
 
 export async function getClient(
-  actor: Actor,
+  _actor: Actor,
   id: string,
 ): Promise<Client | null> {
-  const result = await actor.getClient(id);
-  if (!result || (Array.isArray(result) && result.length === 0)) return null;
-  const val = Array.isArray(result) ? result[0] : result;
-  return mapClient(val);
+  const rows = await supabaseSelect("clients", { id });
+  if (!rows.length) return null;
+  return mapClientRow(rows[0]);
 }
 
 export async function createClient(
-  actor: Actor,
+  _actor: Actor,
   input: ClientFormInput,
 ): Promise<Client> {
-  // Backend: createClient(name, company, hiringManager, email, phone, budget, timeline, notes)
-  // Form: input.name = hiring manager name, input.company = company name
-  const clientName = input.company?.trim() || input.name;
-  const result = await actor.createClient(
-    clientName,
-    input.company ?? "",
-    input.name,
-    input.email,
-    input.phone ?? "",
-    0,
-    "",
-    input.notes ?? "",
-  );
-  return mapClient(result);
+  const row = await supabaseInsert<Record<string, unknown>>("clients", {
+    name: input.name,
+    email: input.email,
+    phone: input.phone ?? null,
+    company: input.company ?? null,
+    notes: input.notes ?? null,
+    industry: input.industry ?? null,
+    status: "active",
+    stage: "Prospect",
+    health_score: 50,
+  });
+  return mapClientRow(row);
 }
 
 export async function updateClient(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   input: Partial<ClientFormInput>,
 ): Promise<Client> {
-  const result = await actor.updateClient(id, input);
-  return mapClient(result);
+  const data: Record<string, unknown> = {};
+  if (input.name !== undefined) data.name = input.name;
+  if (input.email !== undefined) data.email = input.email;
+  if (input.phone !== undefined) data.phone = input.phone;
+  if (input.company !== undefined) data.company = input.company;
+  if (input.notes !== undefined) data.notes = input.notes;
+  if (input.industry !== undefined) data.industry = input.industry;
+  const row = await supabaseUpdate<Record<string, unknown>>(
+    "clients",
+    id,
+    data,
+  );
+  return mapClientRow(row);
 }
 
-export async function deleteClient(actor: Actor, id: string): Promise<void> {
-  await actor.deleteClient(id);
+export async function deleteClient(_actor: Actor, id: string): Promise<void> {
+  await supabaseDelete("clients", id);
 }
 
 // ── Recruiters ────────────────────────────────────────────────────────────────
 
-export async function getRecruiters(actor: Actor): Promise<Recruiter[]> {
-  const result = await actor.listRecruiters();
-  return (result || []).map(mapRecruiter);
+export async function getRecruiters(_actor: Actor): Promise<Recruiter[]> {
+  const rows = await supabaseSelect("recruiters", undefined, {
+    order: "created_at.desc",
+  });
+  return rows.map(mapRecruiterRow);
 }
 
 export async function getRecruiter(
-  actor: Actor,
+  _actor: Actor,
   id: string,
 ): Promise<Recruiter | null> {
-  const result = await actor.getRecruiter(id);
-  if (!result || (Array.isArray(result) && result.length === 0)) return null;
-  const val = Array.isArray(result) ? result[0] : result;
-  return mapRecruiter(val);
+  const rows = await supabaseSelect("recruiters", { id });
+  if (!rows.length) return null;
+  return mapRecruiterRow(rows[0]);
 }
 
 export async function createRecruiter(
-  actor: Actor,
+  _actor: Actor,
   input: RecruiterFormInput,
 ): Promise<Recruiter> {
-  const result = await actor.createRecruiter(
-    input.name,
-    input.email,
-    input.phone ?? "",
-  );
-  return mapRecruiter(result);
+  const row = await supabaseInsert<Record<string, unknown>>("recruiters", {
+    name: input.name,
+    email: input.email,
+    phone: input.phone ?? null,
+    notes: input.notes ?? null,
+    status: "active",
+    stage: "Active",
+    health_score: 50,
+  });
+  return mapRecruiterRow(row);
 }
 
 export async function updateRecruiter(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   input: Partial<RecruiterFormInput>,
 ): Promise<Recruiter> {
-  const result = await actor.updateRecruiter(id, input);
-  return mapRecruiter(result);
+  const data: Record<string, unknown> = {};
+  if (input.name !== undefined) data.name = input.name;
+  if (input.email !== undefined) data.email = input.email;
+  if (input.phone !== undefined) data.phone = input.phone;
+  if (input.notes !== undefined) data.notes = input.notes;
+  const row = await supabaseUpdate<Record<string, unknown>>(
+    "recruiters",
+    id,
+    data,
+  );
+  return mapRecruiterRow(row);
 }
 
-export async function deleteRecruiter(actor: Actor, id: string): Promise<void> {
-  await actor.deleteRecruiter(id);
+export async function deleteRecruiter(
+  _actor: Actor,
+  id: string,
+): Promise<void> {
+  await supabaseDelete("recruiters", id);
 }
 
 // ── Candidates ────────────────────────────────────────────────────────────────
 
-export async function getCandidates(actor: Actor): Promise<Candidate[]> {
-  const result = await actor.listCandidates();
-  return (result || []).map(mapCandidate);
+export async function getCandidates(_actor: Actor): Promise<Candidate[]> {
+  const rows = await supabaseSelect("candidates", undefined, {
+    order: "created_at.desc",
+  });
+  return rows.map(mapCandidateRow);
 }
 
 export async function getCandidate(
-  actor: Actor,
+  _actor: Actor,
   id: string,
 ): Promise<Candidate | null> {
-  const result = await actor.getCandidate(id);
-  if (!result || (Array.isArray(result) && result.length === 0)) return null;
-  const val = Array.isArray(result) ? result[0] : result;
-  return mapCandidate(val);
+  const rows = await supabaseSelect("candidates", { id });
+  if (!rows.length) return null;
+  return mapCandidateRow(rows[0]);
 }
 
 export async function createCandidate(
-  actor: Actor,
+  _actor: Actor,
   input: CandidateFormInput,
 ): Promise<Candidate> {
-  const result = await actor.createCandidate(input);
-  return mapCandidate(result);
+  const row = await supabaseInsert<Record<string, unknown>>("candidates", {
+    name: input.name,
+    email: input.email,
+    phone: input.phone ?? null,
+    role: input.title ?? null,
+    skills: input.skills ?? null,
+    experience: input.notes ?? null,
+    notes: input.notes ?? null,
+    status: "active",
+    stage: "Applied",
+    health_score: 50,
+  });
+  return mapCandidateRow(row);
 }
 
 export async function updateCandidate(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   input: Partial<CandidateFormInput>,
 ): Promise<Candidate> {
-  const result = await actor.updateCandidate(id, input);
-  return mapCandidate(result);
+  const data: Record<string, unknown> = {};
+  if (input.name !== undefined) data.name = input.name;
+  if (input.email !== undefined) data.email = input.email;
+  if (input.phone !== undefined) data.phone = input.phone;
+  if (input.title !== undefined) data.role = input.title;
+  if (input.skills !== undefined) data.skills = input.skills;
+  if (input.notes !== undefined) data.notes = input.notes;
+  const row = await supabaseUpdate<Record<string, unknown>>(
+    "candidates",
+    id,
+    data,
+  );
+  return mapCandidateRow(row);
 }
 
-export async function deleteCandidate(actor: Actor, id: string): Promise<void> {
-  await actor.deleteCandidate(id);
+export async function deleteCandidate(
+  _actor: Actor,
+  id: string,
+): Promise<void> {
+  await supabaseDelete("candidates", id);
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 export async function getPipelineStages(
-  actor: Actor,
+  _actor: Actor,
 ): Promise<PipelineStage[]> {
-  const result = await actor.getPipelineStages();
-  return (result || []).map(mapPipelineStage);
+  return [];
 }
 
 export async function updateEntityStage(
-  actor: Actor,
+  _actor: Actor,
   entityId: string,
   entityType: string,
   newStage: string,
 ): Promise<void> {
-  await actor.updateEntityStage(entityId, entityType, newStage);
+  const tableMap: Record<string, string> = {
+    vendor: "vendors",
+    client: "clients",
+    recruiter: "recruiters",
+    candidate: "candidates",
+  };
+  const table = tableMap[entityType];
+  if (!table) return;
+  await supabaseUpdate(table, entityId, { stage: newStage });
 }
 
 // ── Activities ────────────────────────────────────────────────────────────────
 
 export async function listActivities(
-  actor: Actor,
+  _actor: Actor,
   entityId: string,
 ): Promise<Activity[]> {
-  const result = await actor.getActivitiesForEntity(entityId);
-  return (result || []).map(mapActivity);
+  const rows = await supabaseSelect(
+    "activities",
+    { entity_id: entityId },
+    {
+      order: "created_at.desc",
+      limit: 50,
+    },
+  );
+  return rows.map(mapActivityRow);
 }
 
-export async function getAllActivities(actor: Actor): Promise<Activity[]> {
-  const result = await actor.getAllActivities();
-  return (result || []).map(mapActivity);
+export async function getAllActivities(_actor: Actor): Promise<Activity[]> {
+  const rows = await supabaseSelect("activities", undefined, {
+    order: "created_at.desc",
+    limit: 100,
+  });
+  return rows.map(mapActivityRow);
 }
 
 export async function logActivity(
-  actor: Actor,
+  _actor: Actor,
   input: ActivityFormInput,
 ): Promise<Activity> {
-  const result = await actor.logActivity(input);
-  return mapActivity(result);
+  const row = await supabaseInsert<Record<string, unknown>>("activities", {
+    entity_id: input.entityId,
+    action: input.activityType ?? "note",
+    description: input.notes ?? null,
+    created_by: input.createdBy ?? null,
+  });
+  return mapActivityRow(row);
 }
 
 // ── Follow-Ups ────────────────────────────────────────────────────────────────
 
-export async function listFollowUps(actor: Actor): Promise<FollowUp[]> {
-  const result = await actor.listFollowUps();
-  return (result || []).map(mapFollowUp);
+export async function listFollowUps(_actor: Actor): Promise<FollowUp[]> {
+  return [];
 }
 
-export async function listPendingFollowUps(actor: Actor): Promise<FollowUp[]> {
-  const result = await actor.listPendingFollowUps();
-  return (result || []).map(mapFollowUp);
+export async function listPendingFollowUps(_actor: Actor): Promise<FollowUp[]> {
+  return [];
 }
 
 export async function updateFollowUpStatus(
-  actor: Actor,
-  id: string,
-  status: FollowUpStatus,
-  approvedBy?: string,
-  snoozedUntil?: number,
-): Promise<void> {
-  await actor.updateFollowUpStatus(
-    id,
-    status,
-    approvedBy ? [approvedBy] : [],
-    snoozedUntil ? [BigInt(snoozedUntil)] : [],
-  );
-}
+  _actor: Actor,
+  _id: string,
+  _status: FollowUpStatus,
+  _approvedBy?: string,
+  _snoozedUntil?: number,
+): Promise<void> {}
 
 export async function createFollowUp(
-  actor: Actor,
-  input: FollowUpFormInput,
+  _actor: Actor,
+  _input: FollowUpFormInput,
 ): Promise<FollowUp> {
-  const result = await actor.createFollowUp(input);
-  return mapFollowUp(result);
+  return {
+    id: crypto.randomUUID(),
+    entityId: _input.entityId ?? "",
+    triggerReason: "",
+    suggestedAction: "",
+    status: "pending",
+    createdAt: Date.now(),
+  };
 }
 
-export async function runFollowUpEngine(actor: Actor): Promise<void> {
-  await actor.runFollowUpEngine();
-}
+export async function runFollowUpEngine(_actor: Actor): Promise<void> {}
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
-export async function getJobs(actor: Actor): Promise<Job[]> {
-  const result = await actor.listJobs();
-  return (result || []).map(mapJob);
+export async function getJobs(_actor: Actor): Promise<Job[]> {
+  const rows = await supabaseSelect("jobs", undefined, {
+    order: "created_at.desc",
+  });
+  return rows.map(mapJobRow);
 }
 
 export async function getJobsForClient(
-  actor: Actor,
+  _actor: Actor,
   clientId: string,
 ): Promise<Job[]> {
-  const result = await actor.listJobsForClient(clientId);
-  return (result || []).map(mapJob);
+  const rows = await supabaseSelect(
+    "jobs",
+    { client_id: clientId },
+    {
+      order: "created_at.desc",
+    },
+  );
+  return rows.map(mapJobRow);
 }
 
 export async function createJob(
-  actor: Actor,
+  _actor: Actor,
   input: JobFormInput,
 ): Promise<Job> {
-  const result = await actor.createJob(input);
-  return mapJob(result);
+  const row = await supabaseInsert<Record<string, unknown>>("jobs", {
+    title: input.title,
+    client_id: input.clientId ?? null,
+    description: input.requirements ?? null,
+    rate: input.rateMax ?? null,
+    status: "open",
+  });
+  return mapJobRow(row);
 }
 
 export async function updateJob(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   input: Partial<JobFormInput>,
 ): Promise<Job> {
-  const result = await actor.updateJob(id, input);
-  return mapJob(result);
+  const data: Record<string, unknown> = {};
+  if (input.title !== undefined) data.title = input.title;
+  if (input.requirements !== undefined) data.description = input.requirements;
+  if (input.rateMax !== undefined) data.rate = input.rateMax;
+  const row = await supabaseUpdate<Record<string, unknown>>("jobs", id, data);
+  return mapJobRow(row);
+}
+
+export async function deleteJob(_actor: Actor, id: string): Promise<void> {
+  await supabaseDelete("jobs", id);
 }
 
 // ── Submissions ───────────────────────────────────────────────────────────────
 
-export async function getSubmissions(actor: Actor): Promise<Submission[]> {
-  const result = await actor.listSubmissions();
-  return (result || []).map(mapSubmission);
+export async function getSubmissions(_actor: Actor): Promise<Submission[]> {
+  const rows = await supabaseSelect("submissions", undefined, {
+    order: "created_at.desc",
+  });
+  return rows.map(mapSubmissionRow);
 }
 
 export async function getSubmissionsForCandidate(
-  actor: Actor,
+  _actor: Actor,
   candidateId: string,
 ): Promise<Submission[]> {
-  const result = await actor.listSubmissionsForCandidate(candidateId);
-  return (result || []).map(mapSubmission);
+  const rows = await supabaseSelect("submissions", {
+    candidate_id: candidateId,
+  });
+  return rows.map(mapSubmissionRow);
 }
 
 export async function getSubmissionsForJob(
-  actor: Actor,
+  _actor: Actor,
   jobId: string,
 ): Promise<Submission[]> {
-  const result = await actor.listSubmissionsForJob(jobId);
-  return (result || []).map(mapSubmission);
+  const rows = await supabaseSelect("submissions", { job_id: jobId });
+  return rows.map(mapSubmissionRow);
 }
 
 export async function createSubmission(
-  actor: Actor,
+  _actor: Actor,
   input: SubmissionFormInput,
 ): Promise<Submission> {
-  const result = await actor.createSubmission(input);
-  return mapSubmission(result);
+  const row = await supabaseInsert<Record<string, unknown>>("submissions", {
+    job_id: input.jobId ?? null,
+    candidate_id: input.candidateId ?? null,
+    status: "submitted",
+  });
+  return mapSubmissionRow(row);
 }
 
 export async function updateSubmission(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   status: SubmissionStatus,
 ): Promise<Submission> {
-  const result = await actor.updateSubmission(id, { status });
-  return mapSubmission(result);
+  const row = await supabaseUpdate<Record<string, unknown>>("submissions", id, {
+    status,
+  });
+  return mapSubmissionRow(row);
 }
 
 // ── Approvals ─────────────────────────────────────────────────────────────────
 
 export async function listPendingApprovals(
-  actor: Actor,
+  _actor: Actor,
 ): Promise<ApprovalItem[]> {
-  const result = await actor.listPendingApprovals();
-  return (result || []).map(mapApprovalItem);
+  const rows = await supabaseSelect(
+    "approvals",
+    { status: "pending" },
+    {
+      order: "created_at.desc",
+    },
+  );
+  return rows.map(mapApprovalRow);
 }
 
 export async function listApprovalHistory(
-  actor: Actor,
+  _actor: Actor,
 ): Promise<ApprovalItem[]> {
-  const result = await actor.listApprovalHistory();
-  return (result || []).map(mapApprovalItem);
+  const rows = await supabaseSelect("approvals", undefined, {
+    order: "created_at.desc",
+    limit: 100,
+  });
+  return rows.map(mapApprovalRow);
 }
 
 export async function approveItem(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   approvedBy: string,
 ): Promise<void> {
-  await actor.approveItem(id, approvedBy);
+  await supabaseUpdate("approvals", id, {
+    status: "approved",
+    reviewed_by: approvedBy,
+  });
 }
 
 export async function rejectItem(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   rejectedBy: string,
   notes?: string,
 ): Promise<void> {
-  await actor.rejectItem(id, rejectedBy, notes ? [notes] : []);
+  await supabaseUpdate("approvals", id, {
+    status: "rejected",
+    reviewed_by: rejectedBy,
+    notes: notes ?? null,
+  });
 }
 
 export async function snoozeItem(
-  actor: Actor,
+  _actor: Actor,
   id: string,
-  snoozedUntil: number,
+  _snoozedUntil: number,
 ): Promise<void> {
-  await actor.snoozeItem(id, BigInt(snoozedUntil));
+  await supabaseUpdate("approvals", id, { status: "snoozed" });
 }
 
 export async function createApprovalItem(
-  actor: Actor,
+  _actor: Actor,
   input: ApprovalFormInput,
 ): Promise<ApprovalItem> {
-  const result = await actor.createApprovalItem(input);
-  return mapApprovalItem(result);
+  const row = await supabaseInsert<Record<string, unknown>>("approvals", {
+    entity_id: input.entityId ?? null,
+    entity_type: input.entityType ?? null,
+    action: input.itemType ?? input.description ?? "approval",
+    notes: input.details ?? input.description ?? null,
+    requested_by: input.requestedBy ?? null,
+    status: "pending",
+  });
+  return mapApprovalRow(row);
 }
 
 export async function updateApprovalItem(
-  actor: Actor,
+  _actor: Actor,
   id: string,
   status: ApprovalStatus,
 ): Promise<ApprovalItem> {
-  const result = await actor.updateApprovalItem(id, { status });
-  return mapApprovalItem(result);
+  const row = await supabaseUpdate<Record<string, unknown>>("approvals", id, {
+    status,
+  });
+  return mapApprovalRow(row);
 }
 
 // ── Recruiter Metrics ─────────────────────────────────────────────────────────
 
 export async function logRecruiterMetrics(
-  actor: Actor,
-  input: RecruiterMetricsFormInput,
-): Promise<void> {
-  await actor.logRecruiterMetrics(input);
-}
+  _actor: Actor,
+  _input: RecruiterMetricsFormInput,
+): Promise<void> {}
 
 export async function getRecruiterMetrics(
-  actor: Actor,
-  recruiterId: string,
-  date: string,
+  _actor: Actor,
+  _recruiterId: string,
+  _date: string,
 ): Promise<RecruiterMetrics | null> {
-  const result = await actor.getRecruiterMetrics(recruiterId, date);
-  if (!result || (Array.isArray(result) && result.length === 0)) return null;
-  const val = Array.isArray(result) ? result[0] : result;
-  return mapRecruiterMetrics(val);
+  return null;
 }
 
 export async function getRecruiterMetricsHistory(
-  actor: Actor,
-  recruiterId: string,
+  _actor: Actor,
+  _recruiterId: string,
 ): Promise<RecruiterMetrics[]> {
-  const result = await actor.getRecruiterMetricsHistory(recruiterId);
-  return (result || []).map(mapRecruiterMetrics);
+  return [];
 }
 
 // ── Vendor Metrics ────────────────────────────────────────────────────────────
 
 export async function logVendorMetrics(
-  actor: Actor,
-  input: VendorMetricsFormInput,
-): Promise<void> {
-  await actor.logVendorMetrics(input);
-}
+  _actor: Actor,
+  _input: VendorMetricsFormInput,
+): Promise<void> {}
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
-export async function getPulseDashboard(actor: Actor): Promise<PulseDashboard> {
-  const result = await actor.getPulseDashboard();
-  return mapPulseDashboard(result);
-}
+export async function getPulseDashboard(
+  _actor: Actor,
+): Promise<PulseDashboard> {
+  try {
+    const [vendors, clients, recruiters, candidates, approvals] =
+      await Promise.allSettled([
+        supabaseSelect("vendors", undefined, { limit: 200 }),
+        supabaseSelect("clients", undefined, { limit: 200 }),
+        supabaseSelect("recruiters", undefined, { limit: 200 }),
+        supabaseSelect("candidates", undefined, { limit: 200 }),
+        supabaseSelect("approvals", { status: "pending" }, { limit: 50 }),
+      ]);
 
-export async function getMorningBriefing(
-  actor: Actor,
-): Promise<MorningBriefing> {
-  const result = await actor.getMorningBriefing();
-  return mapMorningBriefing(result);
-}
+    const vs =
+      vendors.status === "fulfilled" ? vendors.value.map(mapVendorRow) : [];
+    const cs =
+      clients.status === "fulfilled" ? clients.value.map(mapClientRow) : [];
+    const rs =
+      recruiters.status === "fulfilled"
+        ? recruiters.value.map(mapRecruiterRow)
+        : [];
+    const cds =
+      candidates.status === "fulfilled"
+        ? candidates.value.map(mapCandidateRow)
+        : [];
+    const aps = approvals.status === "fulfilled" ? approvals.value : [];
 
-export async function seedSampleData(actor: Actor): Promise<void> {
-  await actor.seedSampleData();
-}
+    const entries = [
+      ...vs.map((v) => ({
+        entityId: v.id,
+        entityType: "vendor" as const,
+        name: v.name,
+        company: v.company,
+        currentStage: v.currentStage,
+        healthScore: v.healthScore,
+        healthStatus: (v.healthScore >= 70
+          ? "green"
+          : v.healthScore >= 40
+            ? "yellow"
+            : "red") as "green" | "yellow" | "red",
+        lastActivityAt: v.updatedAt,
+        actionsNeeded: [],
+      })),
+      ...cs.map((c) => ({
+        entityId: c.id,
+        entityType: "client" as const,
+        name: c.name,
+        company: c.company,
+        currentStage: c.currentStage,
+        healthScore: c.healthScore,
+        healthStatus: (c.healthScore >= 70
+          ? "green"
+          : c.healthScore >= 40
+            ? "yellow"
+            : "red") as "green" | "yellow" | "red",
+        lastActivityAt: c.updatedAt,
+        actionsNeeded: [],
+      })),
+    ];
 
-// ── Bench ──────────────────────────────────────────────────────────────────────
-
-export async function getBenchRecords(
-  actor: Actor,
-  filters?: { vendor?: string; role?: string; skill?: string },
-): Promise<BenchRecord[]> {
-  const result = await actor.listBench(
-    filters?.vendor ?? null,
-    filters?.role ?? null,
-    filters?.skill ?? null,
-  );
-  return (result || []).map(mapBenchRecord);
-}
-
-export async function uploadBenchRecords(
-  actor: Actor,
-  records: BenchRecordInput[],
-): Promise<number> {
-  const result = await actor.uploadBenchRecords(records);
-  if (result.__kind__ === "ok") return Number(result.ok);
-  throw new Error(result.err);
-}
-
-export async function matchBench(
-  actor: Actor,
-  jobId: string,
-): Promise<BenchMatch[]> {
-  const result = await actor.matchBench(jobId);
-  return (result || []).map(mapBenchMatch);
-}
-
-export async function deleteBenchRecord(
-  actor: Actor,
-  id: number,
-): Promise<boolean> {
-  const result = await actor.deleteBenchRecord(BigInt(id));
-  if (result.__kind__ === "ok") return result.ok;
-  throw new Error(result.err);
-}
-
-// ── Mappers ───────────────────────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapVendor(r: any): Vendor {
-  return {
-    id: safeString(r.id),
-    name: safeString(r.name),
-    email: safeString(r.email),
-    phone: optVal(r.phone),
-    company: optVal(r.company),
-    linkedinUrl: optVal(r.linkedinUrl ?? r.linkedin_url),
-    currentStage: safeString(r.currentStage ?? r.current_stage ?? "Discovery"),
-    healthScore: safeNumber(r.healthScore ?? r.health_score ?? 80),
-    status: safeString(r.status ?? "active"),
-    specialty: optVal(r.specialty),
-    notes: optVal(r.notes),
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-    updatedAt: safeNumber(r.updatedAt ?? r.updated_at ?? Date.now()),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapClient(r: any): Client {
-  return {
-    id: safeString(r.id),
-    name: safeString(r.name),
-    email: safeString(r.email),
-    phone: optVal(r.phone),
-    company: optVal(r.company),
-    linkedinUrl: optVal(r.linkedinUrl ?? r.linkedin_url),
-    currentStage: safeString(r.currentStage ?? r.current_stage ?? "Prospect"),
-    healthScore: safeNumber(r.healthScore ?? r.health_score ?? 80),
-    status: safeString(r.status ?? "active"),
-    industry: optVal(r.industry),
-    website: optVal(r.website),
-    notes: optVal(r.notes),
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-    updatedAt: safeNumber(r.updatedAt ?? r.updated_at ?? Date.now()),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapRecruiter(r: any): Recruiter {
-  return {
-    id: safeString(r.id),
-    name: safeString(r.name),
-    email: safeString(r.email),
-    phone: optVal(r.phone),
-    currentStage: safeString(r.currentStage ?? r.current_stage ?? "Active"),
-    healthScore: safeNumber(r.healthScore ?? r.health_score ?? 80),
-    status: safeString(r.status ?? "active"),
-    title: optVal(r.title),
-    notes: optVal(r.notes),
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-    updatedAt: safeNumber(r.updatedAt ?? r.updated_at ?? Date.now()),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapCandidate(r: any): Candidate {
-  return {
-    id: safeString(r.id),
-    name: safeString(r.name),
-    email: safeString(r.email),
-    phone: optVal(r.phone),
-    linkedinUrl: optVal(r.linkedinUrl ?? r.linkedin_url),
-    currentStage: safeString(r.currentStage ?? r.current_stage ?? "Applied"),
-    healthScore: safeNumber(r.healthScore ?? r.health_score ?? 80),
-    status: safeString(r.status ?? "active"),
-    title: optVal(r.title),
-    skills: optVal(r.skills),
-    salaryMin: r.salaryMin != null ? safeNumber(r.salaryMin) : undefined,
-    salaryMax: r.salaryMax != null ? safeNumber(r.salaryMax) : undefined,
-    notes: optVal(r.notes),
-    assignedRecruiter: optVal(r.assignedRecruiter ?? r.assigned_recruiter),
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-    updatedAt: safeNumber(r.updatedAt ?? r.updated_at ?? Date.now()),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapActivity(r: any): Activity {
-  return {
-    id: safeString(r.id),
-    entityId: safeString(r.entityId ?? r.entity_id),
-    activityType: (r.activityType ??
-      r.activity_type ??
-      "note") as Activity["activityType"],
-    direction: optVal(r.direction),
-    notes: optVal(r.notes),
-    createdBy: optVal(r.createdBy ?? r.created_by),
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapFollowUp(r: any): FollowUp {
-  return {
-    id: safeString(r.id),
-    entityId: safeString(r.entityId ?? r.entity_id),
-    entityName: optVal(r.entityName ?? r.entity_name),
-    entityType: optVal(r.entityType ?? r.entity_type),
-    triggerReason: safeString(r.triggerReason ?? r.trigger_reason ?? ""),
-    suggestedAction: safeString(r.suggestedAction ?? r.suggested_action ?? ""),
-    suggestedMessage: optVal(r.suggestedMessage ?? r.suggested_message),
-    aiConfidence:
-      r.aiConfidence != null ? safeNumber(r.aiConfidence) : undefined,
-    status: (r.status ?? "pending") as FollowUpStatus,
-    approvedBy: optVal(r.approvedBy ?? r.approved_by),
-    approvedAt: r.approvedAt ? safeNumber(r.approvedAt) : undefined,
-    sentAt: r.sentAt ? safeNumber(r.sentAt) : undefined,
-    snoozedUntil: r.snoozedUntil ? safeNumber(r.snoozedUntil) : undefined,
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapJob(r: any): Job {
-  return {
-    id: safeString(r.id),
-    clientId: safeString(r.clientId ?? r.client_id),
-    clientName: optVal(r.clientName ?? r.client_name),
-    title: safeString(r.title),
-    requirements: optVal(r.requirements),
-    rateMin: r.rateMin != null ? safeNumber(r.rateMin) : undefined,
-    rateMax: r.rateMax != null ? safeNumber(r.rateMax) : undefined,
-    location: optVal(r.location),
-    status: (r.status ?? "open") as Job["status"],
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-    filledAt: r.filledAt ? safeNumber(r.filledAt) : undefined,
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapSubmission(r: any): Submission {
-  return {
-    id: safeString(r.id),
-    candidateId: safeString(r.candidateId ?? r.candidate_id),
-    candidateName: optVal(r.candidateName ?? r.candidate_name),
-    jobId: safeString(r.jobId ?? r.job_id),
-    jobTitle: optVal(r.jobTitle ?? r.job_title),
-    vendorId: optVal(r.vendorId ?? r.vendor_id),
-    submittedBy: optVal(r.submittedBy ?? r.submitted_by),
-    rateProposed:
-      r.rateProposed != null ? safeNumber(r.rateProposed) : undefined,
-    status: (r.status ?? "pending") as SubmissionStatus,
-    submittedAt: safeNumber(r.submittedAt ?? r.submitted_at ?? Date.now()),
-    approvedBy: optVal(r.approvedBy ?? r.approved_by),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapPipelineStage(r: any): PipelineStage {
-  return {
-    id: safeString(r.id),
-    entityType: (r.entityType ??
-      r.entity_type ??
-      "vendor") as PipelineStage["entityType"],
-    stageName: safeString(r.stageName ?? r.stage_name),
-    stageOrder: safeNumber(r.stageOrder ?? r.stage_order ?? 0),
-    requiresApproval: Boolean(
-      r.requiresApproval ?? r.requires_approval ?? false,
-    ),
-    autoTriggerFollowup: Boolean(
-      r.autoTriggerFollowup ?? r.auto_trigger_followup ?? false,
-    ),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapRecruiterMetrics(r: any): RecruiterMetrics {
-  return {
-    id: safeString(r.id),
-    recruiterId: safeString(r.recruiterId ?? r.recruiter_id),
-    date: safeString(r.date),
-    screenTimeActive: safeNumber(
-      r.screenTimeActive ?? r.screen_time_active ?? 0,
-    ),
-    screenTimeIdle: safeNumber(r.screenTimeIdle ?? r.screen_time_idle ?? 0),
-    callsMade: safeNumber(r.callsMade ?? r.calls_made ?? 0),
-    emailsSent: safeNumber(r.emailsSent ?? r.emails_sent ?? 0),
-    submissions: safeNumber(r.submissions ?? 0),
-    interviewsScheduled: safeNumber(
-      r.interviewsScheduled ?? r.interviews_scheduled ?? 0,
-    ),
-    tasksCompleted: safeNumber(r.tasksCompleted ?? r.tasks_completed ?? 0),
-    aiProductivityScore: safeNumber(
-      r.aiProductivityScore ?? r.ai_productivity_score ?? 0,
-    ),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapApprovalItem(r: any): ApprovalItem {
-  return {
-    id: safeString(r.id),
-    entityId: safeString(r.entityId ?? r.entity_id),
-    entityName: optVal(r.entityName ?? r.entity_name),
-    entityType: optVal(r.entityType ?? r.entity_type),
-    itemType: safeString(r.itemType ?? r.item_type ?? ""),
-    description: safeString(r.description ?? ""),
-    details: optVal(r.details),
-    requestedBy: optVal(r.requestedBy ?? r.requested_by),
-    status: (r.status ?? "pending") as ApprovalStatus,
-    approvedBy: optVal(r.approvedBy ?? r.approved_by),
-    approvedAt: r.approvedAt ? safeNumber(r.approvedAt) : undefined,
-    rejectedBy: optVal(r.rejectedBy ?? r.rejected_by),
-    rejectedAt: r.rejectedAt ? safeNumber(r.rejectedAt) : undefined,
-    rejectionNotes: optVal(r.rejectionNotes ?? r.rejection_notes),
-    snoozedUntil: r.snoozedUntil ? safeNumber(r.snoozedUntil) : undefined,
-    createdAt: safeNumber(r.createdAt ?? r.created_at ?? Date.now()),
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapPulseDashboard(r: any): PulseDashboard {
-  if (!r) {
+    return {
+      entries,
+      totalVendors: vs.length,
+      totalClients: cs.length,
+      totalRecruiters: rs.length,
+      totalCandidates: cds.length,
+      pendingApprovals: aps.length,
+      pendingFollowUps: 0,
+      lastUpdated: Date.now(),
+    };
+  } catch {
     return {
       entries: [],
       totalVendors: 0,
@@ -772,85 +884,95 @@ function mapPulseDashboard(r: any): PulseDashboard {
       lastUpdated: Date.now(),
     };
   }
+}
+
+export async function getMorningBriefing(
+  _actor: Actor,
+): Promise<MorningBriefing> {
   return {
-    entries: (r.entries || []).map(mapPulseEntry),
-    totalVendors: safeNumber(r.totalVendors ?? r.total_vendors ?? 0),
-    totalClients: safeNumber(r.totalClients ?? r.total_clients ?? 0),
-    totalRecruiters: safeNumber(r.totalRecruiters ?? r.total_recruiters ?? 0),
-    totalCandidates: safeNumber(r.totalCandidates ?? r.total_candidates ?? 0),
-    pendingApprovals: safeNumber(
-      r.pendingApprovals ?? r.pending_approvals ?? 0,
-    ),
-    pendingFollowUps: safeNumber(
-      r.pendingFollowUps ?? r.pending_follow_ups ?? 0,
-    ),
-    lastUpdated: safeNumber(r.lastUpdated ?? r.last_updated ?? Date.now()),
+    date: new Date().toDateString(),
+    priorities: [],
+    recruiterActivity: [],
+    aiSuggestions: [],
+    generatedAt: Date.now(),
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapPulseEntry(r: any) {
-  return {
-    entityId: safeString(r.entityId ?? r.entity_id),
-    entityType: (r.entityType ?? r.entity_type ?? "vendor") as
-      | "vendor"
-      | "client"
-      | "recruiter"
-      | "candidate",
-    name: safeString(r.name),
-    company: optVal(r.company),
-    currentStage: safeString(r.currentStage ?? r.current_stage ?? ""),
-    healthScore: safeNumber(r.healthScore ?? r.health_score ?? 80),
-    healthStatus: (r.healthStatus ?? r.health_status ?? "green") as
-      | "green"
-      | "yellow"
-      | "red",
-    lastActivityAt: r.lastActivityAt ? safeNumber(r.lastActivityAt) : undefined,
-    actionsNeeded: r.actionsNeeded ?? r.actions_needed ?? [],
-  };
+export async function seedSampleData(_actor: Actor): Promise<void> {}
+
+// ── Bench ──────────────────────────────────────────────────────────────────────
+
+/** Maps a Supabase bench_records row. Uses numeric index for .id (type compat)
+ *  but stores the UUID in a side-channel map for deletes. */
+const _benchUUIDMap = new Map<number, string>();
+
+export function getBenchUUID(numericId: number): string | undefined {
+  return _benchUUIDMap.get(numericId);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapMorningBriefing(r: any): MorningBriefing {
-  if (!r) {
-    return {
-      date: new Date().toDateString(),
-      priorities: [],
-      recruiterActivity: [],
-      aiSuggestions: [],
-      generatedAt: Date.now(),
-    };
+export async function getBenchRecords(
+  _actor: Actor,
+  filters?: { vendor?: string; role?: string; skill?: string },
+): Promise<BenchRecord[]> {
+  const rows = await supabaseSelect("bench_records", undefined, {
+    order: "created_at.desc",
+    limit: 500,
+  });
+  let results = rows.map((r, i) => mapBenchRow(r, i));
+
+  if (filters?.vendor) {
+    results = results.filter((r) =>
+      r.vendorName.toLowerCase().includes(filters.vendor!.toLowerCase()),
+    );
   }
-  return {
-    date: safeString(r.date),
-    priorities: r.priorities || [],
-    recruiterActivity: r.recruiterActivity ?? r.recruiter_activity ?? [],
-    aiSuggestions: r.aiSuggestions ?? r.ai_suggestions ?? [],
-    generatedAt: safeNumber(r.generatedAt ?? r.generated_at ?? Date.now()),
-  };
+  if (filters?.role) {
+    results = results.filter((r) =>
+      r.role.toLowerCase().includes(filters.role!.toLowerCase()),
+    );
+  }
+  if (filters?.skill) {
+    results = results.filter((r) =>
+      r.skill.toLowerCase().includes(filters.skill!.toLowerCase()),
+    );
+  }
+  return results;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapBenchRecord(r: any): BenchRecord {
-  return {
-    id: Number(r.id ?? 0),
-    vendorName: safeString(r.vendorName ?? r.vendor_name),
-    candidateName: safeString(r.candidateName ?? r.candidate_name),
-    role: safeString(r.role),
-    experience: safeString(r.experience),
-    skill: safeString(r.skill),
-    rate: typeof r.rate === "number" ? r.rate : Number(r.rate ?? 0),
-    importedAt: safeNumber(r.importedAt ?? r.imported_at ?? Date.now()),
-  };
+export async function uploadBenchRecords(
+  _actor: Actor,
+  records: BenchRecordInput[],
+): Promise<number> {
+  const rows = records.map((r) => ({
+    vendor_name: r.vendorName ?? null,
+    candidate_name: r.candidateName,
+    role: r.role ?? null,
+    experience: r.experience ?? null,
+    skills: r.skill ?? null,
+    rate: r.rate ?? null,
+    status: "available",
+  }));
+  const inserted = await supabaseBatchInsert("bench_records", rows);
+  return inserted.length;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapBenchMatch(r: any): BenchMatch {
-  return {
-    ...mapBenchRecord(r),
-    matchScore:
-      typeof r.matchScore === "number"
-        ? r.matchScore
-        : Number(r.matchScore ?? 0),
-  };
+export async function matchBench(
+  _actor: Actor,
+  _jobId: string,
+): Promise<BenchMatch[]> {
+  return [];
+}
+
+export async function deleteBenchRecord(
+  _actor: Actor,
+  id: number,
+): Promise<boolean> {
+  const uuid = getBenchUUID(id);
+  if (!uuid) {
+    throw new Error(
+      "Could not find bench record UUID for deletion. Please refresh the page and try again.",
+    );
+  }
+  await supabaseDelete("bench_records", uuid);
+  _benchUUIDMap.delete(id);
+  return true;
 }

@@ -23,9 +23,12 @@ import {
   useDeleteBenchRecord,
   useUploadBench,
 } from "@/hooks/use-crm";
+import { getSupabaseCreds } from "@/lib/supabase";
 import type { BenchRecord, BenchRecordInput } from "@/types/crm";
 import * as RadixDialog from "@radix-ui/react-dialog";
+import { Link } from "@tanstack/react-router";
 import {
+  AlertCircle,
   AlertTriangle,
   Archive,
   ChevronDown,
@@ -845,6 +848,25 @@ export default function BenchPage() {
 
   return (
     <div className="flex flex-col gap-5 p-6 max-w-full">
+      {/* No Supabase banner */}
+      {!getSupabaseCreds() && (
+        <div
+          className="flex items-center gap-2 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30"
+          data-ocid="bench-no-supabase-banner"
+        >
+          <AlertCircle className="h-4 w-4 text-amber-400 flex-shrink-0" />
+          <p className="text-xs text-amber-300/90 flex-1">
+            Supabase not connected — go to{" "}
+            <Link
+              to="/settings"
+              className="underline underline-offset-2 font-medium"
+            >
+              Settings → Integrations
+            </Link>{" "}
+            to add your credentials before uploading bench data.
+          </p>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">

@@ -14,18 +14,19 @@ import {
   useUpdateEntityStage,
   useVendors,
 } from "@/hooks/use-crm";
+import { getSupabaseCreds } from "@/lib/supabase";
 import { computeHealthStatus } from "@/lib/utils/health";
 import { VENDOR_STAGES, stageRequiresApproval } from "@/lib/utils/pipeline";
 import type { Vendor } from "@/types/crm";
 import type { VendorFormInput } from "@/types/forms";
 import { Link } from "@tanstack/react-router";
 import {
+  AlertCircle,
   Building2,
   Clock,
   LayoutGrid,
   List,
   Plus,
-  Send,
   Timer,
 } from "lucide-react";
 import { useState } from "react";
@@ -385,6 +386,25 @@ export default function VendorsPage() {
 
   return (
     <div className="flex flex-col h-full" data-ocid="vendors-page">
+      {/* No Supabase banner */}
+      {!getSupabaseCreds() && (
+        <div
+          className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/30 flex-shrink-0"
+          data-ocid="vendors-no-supabase-banner"
+        >
+          <AlertCircle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
+          <p className="text-xs text-amber-300/90">
+            Supabase not connected — go to{" "}
+            <Link
+              to="/settings"
+              className="underline underline-offset-2 font-medium"
+            >
+              Settings → Integrations
+            </Link>{" "}
+            to add your credentials before saving data.
+          </p>
+        </div>
+      )}
       <PageHeader
         title="Vendors"
         subtitle={`${vendors.length} vendor${vendors.length !== 1 ? "s" : ""} · Discovery → Optimization pipeline`}

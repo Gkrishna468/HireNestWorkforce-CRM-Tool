@@ -1,10 +1,11 @@
 import { useActor } from "@caffeineai/core-infrastructure";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { createActor } from "../backend";
 import * as api from "../lib/api";
+import { SupabaseNotConfiguredError, getSupabaseCreds } from "../lib/supabase";
 import type {
   ApprovalStatus,
-  BenchMatch,
   BenchRecord,
   BenchRecordInput,
   FollowUpStatus,
@@ -53,204 +54,257 @@ export const QK = {
   benchMatch: (jobId: string) => ["bench-match", jobId] as const,
 };
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function useActorQuery() {
   const { actor, isFetching } = useActor(createActor);
   return { actor, ready: !!actor && !isFetching };
 }
 
+/** Check Supabase credentials and show a toast if missing */
+function checkSupabaseOrThrow() {
+  const creds = getSupabaseCreds();
+  if (!creds) {
+    toast.error("Supabase not connected", {
+      description:
+        "Go to Settings → Integrations to add your Supabase credentials before saving data.",
+      duration: 6000,
+    });
+    throw new SupabaseNotConfiguredError();
+  }
+}
+
+function handleMutationError(err: unknown) {
+  if (err instanceof SupabaseNotConfiguredError) {
+    // already toasted in checkSupabaseOrThrow
+    return;
+  }
+  const msg =
+    err instanceof Error ? err.message : "An unexpected error occurred";
+  toast.error(msg);
+}
+
 // ── Vendors ───────────────────────────────────────────────────────────────────
 
 export function useVendors() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.vendors,
-    queryFn: () => api.getVendors(actor),
-    enabled: ready,
+    queryFn: () => api.getVendors(null),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useCreateVendor() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: VendorFormInput) => api.createVendor(actor, input),
+    mutationFn: (input: VendorFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createVendor(null, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.vendors }),
+    onError: handleMutationError,
   });
 }
 
 export function useUpdateVendor() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
     mutationFn: ({
       id,
       input,
-    }: { id: string; input: Partial<VendorFormInput> }) =>
-      api.updateVendor(actor, id, input),
+    }: { id: string; input: Partial<VendorFormInput> }) => {
+      checkSupabaseOrThrow();
+      return api.updateVendor(null, id, input);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.vendors });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 export function useDeleteVendor() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (id: string) => api.deleteVendor(actor, id),
+    mutationFn: (id: string) => {
+      checkSupabaseOrThrow();
+      return api.deleteVendor(null, id);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.vendors });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
 export function useClients() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.clients,
-    queryFn: () => api.getClients(actor),
-    enabled: ready,
+    queryFn: () => api.getClients(null),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useCreateClient() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: ClientFormInput) => api.createClient(actor, input),
+    mutationFn: (input: ClientFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createClient(null, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.clients }),
+    onError: handleMutationError,
   });
 }
 
 export function useUpdateClient() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
     mutationFn: ({
       id,
       input,
-    }: { id: string; input: Partial<ClientFormInput> }) =>
-      api.updateClient(actor, id, input),
+    }: { id: string; input: Partial<ClientFormInput> }) => {
+      checkSupabaseOrThrow();
+      return api.updateClient(null, id, input);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.clients });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 export function useDeleteClient() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (id: string) => api.deleteClient(actor, id),
+    mutationFn: (id: string) => {
+      checkSupabaseOrThrow();
+      return api.deleteClient(null, id);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.clients });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 // ── Recruiters ────────────────────────────────────────────────────────────────
 
 export function useRecruiters() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.recruiters,
-    queryFn: () => api.getRecruiters(actor),
-    enabled: ready,
+    queryFn: () => api.getRecruiters(null),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useCreateRecruiter() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: RecruiterFormInput) =>
-      api.createRecruiter(actor, input),
+    mutationFn: (input: RecruiterFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createRecruiter(null, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.recruiters }),
+    onError: handleMutationError,
   });
 }
 
 export function useUpdateRecruiter() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
     mutationFn: ({
       id,
       input,
-    }: { id: string; input: Partial<RecruiterFormInput> }) =>
-      api.updateRecruiter(actor, id, input),
+    }: { id: string; input: Partial<RecruiterFormInput> }) => {
+      checkSupabaseOrThrow();
+      return api.updateRecruiter(null, id, input);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.recruiters });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 export function useDeleteRecruiter() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (id: string) => api.deleteRecruiter(actor, id),
+    mutationFn: (id: string) => {
+      checkSupabaseOrThrow();
+      return api.deleteRecruiter(null, id);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.recruiters });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 // ── Candidates ────────────────────────────────────────────────────────────────
 
 export function useCandidates() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.candidates,
-    queryFn: () => api.getCandidates(actor),
-    enabled: ready,
+    queryFn: () => api.getCandidates(null),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useCreateCandidate() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: CandidateFormInput) =>
-      api.createCandidate(actor, input),
+    mutationFn: (input: CandidateFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createCandidate(null, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.candidates }),
+    onError: handleMutationError,
   });
 }
 
 export function useUpdateCandidate() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
     mutationFn: ({
       id,
       input,
-    }: { id: string; input: Partial<CandidateFormInput> }) =>
-      api.updateCandidate(actor, id, input),
+    }: { id: string; input: Partial<CandidateFormInput> }) => {
+      checkSupabaseOrThrow();
+      return api.updateCandidate(null, id, input);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.candidates });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 export function useDeleteCandidate() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (id: string) => api.deleteCandidate(actor, id),
+    mutationFn: (id: string) => {
+      checkSupabaseOrThrow();
+      return api.deleteCandidate(null, id);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.candidates });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
@@ -268,14 +322,15 @@ export function usePipelineStages() {
 
 export function useUpdateEntityStage() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
     mutationFn: ({
       entityId,
       entityType,
       newStage,
-    }: { entityId: string; entityType: string; newStage: string }) =>
-      api.updateEntityStage(actor, entityId, entityType, newStage),
+    }: { entityId: string; entityType: string; newStage: string }) => {
+      checkSupabaseOrThrow();
+      return api.updateEntityStage(null, entityId, entityType, newStage);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.vendors });
       qc.invalidateQueries({ queryKey: QK.clients });
@@ -283,29 +338,33 @@ export function useUpdateEntityStage() {
       qc.invalidateQueries({ queryKey: QK.candidates });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 // ── Activities ────────────────────────────────────────────────────────────────
 
 export function useActivities(entityId: string) {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.activities(entityId),
-    queryFn: () => api.listActivities(actor, entityId),
-    enabled: ready && !!entityId,
+    queryFn: () => api.listActivities(null, entityId),
+    enabled: !!entityId && !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useLogActivity() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: ActivityFormInput) => api.logActivity(actor, input),
+    mutationFn: (input: ActivityFormInput) => {
+      checkSupabaseOrThrow();
+      return api.logActivity(null, input);
+    },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: QK.activities(variables.entityId) });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
@@ -369,177 +428,202 @@ export function useRunFollowUpEngine() {
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
 export function useJobs() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.jobs,
-    queryFn: () => api.getJobs(actor),
-    enabled: ready,
+    queryFn: () => api.getJobs(null),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useJobsForClient(clientId: string) {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.jobsForClient(clientId),
-    queryFn: () => api.getJobsForClient(actor, clientId),
-    enabled: ready && !!clientId,
+    queryFn: () => api.getJobsForClient(null, clientId),
+    enabled: !!clientId && !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useCreateJob() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: JobFormInput) => api.createJob(actor, input),
+    mutationFn: (input: JobFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createJob(null, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.jobs }),
+    onError: handleMutationError,
   });
 }
 
 export function useUpdateJob() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<JobFormInput> }) =>
-      api.updateJob(actor, id, input),
+    mutationFn: ({
+      id,
+      input,
+    }: { id: string; input: Partial<JobFormInput> }) => {
+      checkSupabaseOrThrow();
+      return api.updateJob(null, id, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.jobs }),
+    onError: handleMutationError,
   });
 }
 
 // ── Submissions ───────────────────────────────────────────────────────────────
 
 export function useSubmissions() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.submissions,
-    queryFn: () => api.getSubmissions(actor),
-    enabled: ready,
+    queryFn: () => api.getSubmissions(null),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useSubmissionsForJob(jobId: string) {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.submissionsForJob(jobId),
-    queryFn: () => api.getSubmissionsForJob(actor, jobId),
-    enabled: ready && !!jobId,
+    queryFn: () => api.getSubmissionsForJob(null, jobId),
+    enabled: !!jobId && !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useSubmissionsForCandidate(candidateId: string) {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.submissionsForCandidate(candidateId),
-    queryFn: () => api.getSubmissionsForCandidate(actor, candidateId),
-    enabled: ready && !!candidateId,
+    queryFn: () => api.getSubmissionsForCandidate(null, candidateId),
+    enabled: !!candidateId && !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useCreateSubmission() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: SubmissionFormInput) =>
-      api.createSubmission(actor, input),
+    mutationFn: (input: SubmissionFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createSubmission(null, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.submissions }),
+    onError: handleMutationError,
   });
 }
 
 export function useUpdateSubmission() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: ({ id, status }: { id: string; status: SubmissionStatus }) =>
-      api.updateSubmission(actor, id, status),
+    mutationFn: ({ id, status }: { id: string; status: SubmissionStatus }) => {
+      checkSupabaseOrThrow();
+      return api.updateSubmission(null, id, status);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.submissions }),
+    onError: handleMutationError,
   });
 }
 
 // ── Approvals ─────────────────────────────────────────────────────────────────
 
 export function usePendingApprovals() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.pendingApprovals,
-    queryFn: () => api.listPendingApprovals(actor),
-    enabled: ready,
+    queryFn: () => api.listPendingApprovals(null),
+    enabled: !!getSupabaseCreds(),
     refetchInterval: POLL_INTERVAL,
+    retry: false,
   });
 }
 
 export function useApprovalHistory() {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.approvalHistory,
-    queryFn: () => api.listApprovalHistory(actor),
-    enabled: ready,
+    queryFn: () => api.listApprovalHistory(null),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useApproveItem() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: ({ id, approvedBy }: { id: string; approvedBy: string }) =>
-      api.approveItem(actor, id, approvedBy),
+    mutationFn: ({ id, approvedBy }: { id: string; approvedBy: string }) => {
+      checkSupabaseOrThrow();
+      return api.approveItem(null, id, approvedBy);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.pendingApprovals });
       qc.invalidateQueries({ queryKey: QK.approvalHistory });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 export function useRejectItem() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
     mutationFn: ({
       id,
       rejectedBy,
       notes,
-    }: { id: string; rejectedBy: string; notes?: string }) =>
-      api.rejectItem(actor, id, rejectedBy, notes),
+    }: { id: string; rejectedBy: string; notes?: string }) => {
+      checkSupabaseOrThrow();
+      return api.rejectItem(null, id, rejectedBy, notes);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.pendingApprovals });
       qc.invalidateQueries({ queryKey: QK.approvalHistory });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 export function useSnoozeItem() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: ({ id, snoozedUntil }: { id: string; snoozedUntil: number }) =>
-      api.snoozeItem(actor, id, snoozedUntil),
+    mutationFn: ({
+      id,
+      snoozedUntil,
+    }: { id: string; snoozedUntil: number }) => {
+      checkSupabaseOrThrow();
+      return api.snoozeItem(null, id, snoozedUntil);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.pendingApprovals });
       qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
 
 export function useCreateApprovalItem() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (input: ApprovalFormInput) =>
-      api.createApprovalItem(actor, input),
+    mutationFn: (input: ApprovalFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createApprovalItem(null, input);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.pendingApprovals }),
+    onError: handleMutationError,
   });
 }
 
 export function useUpdateApprovalItem() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: ({ id, status }: { id: string; status: ApprovalStatus }) =>
-      api.updateApprovalItem(actor, id, status),
+    mutationFn: ({ id, status }: { id: string; status: ApprovalStatus }) => {
+      checkSupabaseOrThrow();
+      return api.updateApprovalItem(null, id, status);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.pendingApprovals });
       qc.invalidateQueries({ queryKey: QK.approvalHistory });
     },
+    onError: handleMutationError,
   });
 }
 
@@ -586,8 +670,11 @@ export function usePulseDashboard() {
   const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: QK.pulseDashboard,
-    queryFn: () => api.getPulseDashboard(actor),
-    enabled: ready,
+    queryFn: () => {
+      if (getSupabaseCreds()) return api.getPulseDashboard(null);
+      return api.getPulseDashboard(actor);
+    },
+    enabled: ready || !!getSupabaseCreds(),
     refetchInterval: POLL_INTERVAL,
   });
 }
@@ -620,23 +707,25 @@ export function useBenchRecords(filters?: {
   role?: string;
   skill?: string;
 }) {
-  const { actor, ready } = useActorQuery();
   return useQuery({
     queryKey: [...QK.bench, filters],
-    queryFn: () => api.getBenchRecords(actor, filters),
-    enabled: ready,
+    queryFn: () => api.getBenchRecords(null, filters),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
   });
 }
 
 export function useUploadBench() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (records: BenchRecordInput[]) =>
-      api.uploadBenchRecords(actor, records),
+    mutationFn: (records: BenchRecordInput[]) => {
+      checkSupabaseOrThrow();
+      return api.uploadBenchRecords(null, records);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.bench });
     },
+    onError: handleMutationError,
   });
 }
 
@@ -651,11 +740,17 @@ export function useMatchBench(jobId: string) {
 
 export function useDeleteBenchRecord() {
   const qc = useQueryClient();
-  const { actor } = useActorQuery();
   return useMutation({
-    mutationFn: (id: number) => api.deleteBenchRecord(actor, id),
+    mutationFn: (id: number) => {
+      checkSupabaseOrThrow();
+      return api.deleteBenchRecord(null, id);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.bench });
     },
+    onError: handleMutationError,
   });
 }
+
+// ── Re-exports for type usage ─────────────────────────────────────────────────
+export type { BenchRecord, BenchRecordInput };

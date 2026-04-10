@@ -17,12 +17,13 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCreateRecruiter, useRecruiters } from "@/hooks/use-crm";
+import { getSupabaseCreds } from "@/lib/supabase";
 import { computeHealthStatus } from "@/lib/utils/health";
 import { RECRUITER_STAGES } from "@/lib/utils/pipeline";
 import type { Recruiter } from "@/types/crm";
 import type { RecruiterFormInput } from "@/types/forms";
 import { Link } from "@tanstack/react-router";
-import { LayoutGrid, List, Plus, Users } from "lucide-react";
+import { AlertCircle, LayoutGrid, List, Plus, Users } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -404,6 +405,25 @@ export default function RecruitersPage() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* No Supabase banner */}
+      {!getSupabaseCreds() && (
+        <div
+          className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/30 flex-shrink-0"
+          data-ocid="recruiters-no-supabase-banner"
+        >
+          <AlertCircle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
+          <p className="text-xs text-amber-300/90">
+            Supabase not connected —{" "}
+            <Link
+              to="/settings"
+              className="underline underline-offset-2 font-medium"
+            >
+              Settings → Integrations
+            </Link>{" "}
+            to add credentials.
+          </p>
+        </div>
+      )}
       {/* Page header */}
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card flex-shrink-0">
         <div>
