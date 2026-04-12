@@ -213,8 +213,8 @@ function KanbanCol({
       >
         {candidates.map((c) => {
           const vendorName = c.assignedRecruiter
-            ? undefined
-            : vendorMap.get(c.assignedRecruiter ?? "")?.name;
+            ? vendorMap.get(c.assignedRecruiter)?.name
+            : undefined;
           const jobTitle = c.jobId ? jobMap.get(c.jobId)?.title : undefined;
           return (
             <KanbanCard
@@ -240,10 +240,19 @@ function KanbanCol({
 
 // ── Add Candidate form ────────────────────────────────────────────────────────
 
-interface AddCandidateFormData extends CandidateFormInput {
+interface AddCandidateFormData {
+  name: string;
+  email: string;
+  phone?: string;
+  title?: string;
+  skills?: string;
+  notes?: string;
+  assignedRecruiter?: string;
+  source?: string;
+  jobId?: string;
   salaryType: "lpm" | "lpa";
   salaryAmount: string;
-  jobId?: string;
+  linkedinUrl?: string;
 }
 
 function AddCandidateModal({
@@ -313,28 +322,52 @@ function AddCandidateModal({
         }
       }
 
-      const submitData: CandidateFormInput = {
+      // Build the payload with correct snake_case column names for Supabase
+      // Only include fields that exist in your database schema
+      const payload: Record<string, unknown> = {
         name: data.name,
         email: data.email,
-        phone: data.phone,
-        title: data.title,
-        skills: data.skills,
-        notes: data.notes,
-        assignedRecruiter: data.assignedRecruiter,
-        vendorId: data.vendorId,
-        jobId: data.jobId === "__none__" ? undefined : data.jobId,
-        linkedinUrl: data.linkedinUrl,
-        salaryMin,
-        salaryMax,
+        current_stage: "Applied", // Default stage
+        health_score: 50, // Default health score
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       };
 
-      await createCandidate.mutateAsync(submitData);
+      // Optional fields - only add if they have values
+      if (data.phone) payload.phone = data.phone;
+      if (data.title) payload.title = data.title;
+      if (data.skills) payload.skills = data.skills;
+      if (data.notes) payload.notes = data.notes;
+      if (data.linkedinUrl) payload.linkedin_url = data.linkedinUrl;
+      if (salaryMin !== undefined) payload.salary_min = salaryMin;
+      if (salaryMax !== undefined) payload.salary_max = salaryMax;
+      
+      // Handle source - map to assigned_recruiter if it's a source value
+      if (data.source && data.source !== "__none__") {
+        payload.assigned_recruiter = data.source;
+      }
+      
+      // Handle vendor selection - use assigned_recruiter for vendor too
+      // or you might have a separate vendor_id column
+      // Check your schema to see which column name to use
+      if (data.assignedRecruiter && data.assignedRecruiter !== "__none__") {
+        payload.assigned_recruiter = data.assignedRecruiter;
+      }
+
+      // Handle job selection
+      if (data.jobId && data.jobId !== "__none__") {
+        payload.job_id = data.jobId;
+      }
+
+      console.log("Submitting payload:", payload);
+
+      await createCandidate.mutateAsync(payload as CandidateFormInput);
       toast.success("Candidate added successfully");
       reset();
       onClose();
     } catch (error) {
       console.error("Error adding candidate:", error);
-      toast.error("Failed to add candidate");
+      toast.error("Failed to add candidate. Check console for details.");
     }
   }
 
@@ -430,7 +463,7 @@ function AddCandidateModal({
           <div className="space-y-1">
             <Label className="text-xs">Source</Label>
             <Controller
-              name="assignedRecruiter"
+              name="source"
               control={control}
               render={({ field }) => (
                 <Select onValueChange={field.onChange} value={field.value}>
@@ -441,6 +474,7 @@ function AddCandidateModal({
                     <SelectValue placeholder="Select source" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="__none__">— None —</SelectItem>
                     <SelectItem value="referral">Referral</SelectItem>
                     <SelectItem value="job board">Job Board</SelectItem>
                     <SelectItem value="linkedin">LinkedIn</SelectItem>
@@ -499,19 +533,20 @@ function AddCandidateModal({
           )}
         </div>
 
+        {/* Vendor Selection - Maps to assigned_recruiter */}
         <div className="space-y-1">
           <Label className="text-xs">
-            Vendor{" "}
+            Vendor / Recruiter{" "}
             <span className="text-muted-foreground font-normal">
-              (which vendor is processing this profile)
+              (who is processing this profile)
             </span>
           </Label>
           <Controller
-            name="vendorId"
+            name="assignedRecruiter"
             control={control}
             render={({ field }) => (
               <Select 
-                onValueChange={(v) => field.onChange(v === "__none__" ? undefined : v)} 
+                onValueChange={field.onChange} 
                 value={field.value || "__none__"}
               >
                 <SelectTrigger
@@ -642,7 +677,6 @@ export default function CandidatesPage() {
       (c.title ?? "").toLowerCase().includes(filter.toLowerCase());
     const matchVendor =
       !vendorFilter ||
-      c.vendorId === vendorFilter ||
       c.assignedRecruiter === vendorFilter;
     const matchJob =
       !jobFilter ||
