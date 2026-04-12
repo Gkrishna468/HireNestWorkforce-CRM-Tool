@@ -31,6 +31,7 @@ import {
   useUpdateEntityStage,
   useVendors,
   useJobs,
+  useCreateSubmission,
 } from "@/hooks/use-crm";
 import { getSupabaseCreds } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -87,63 +88,81 @@ interface KanbanCardProps {
     candidateId: string,
     fromStage: string,
   ) => void;
+  onSubmitClick?: (candidateId: string) => void;
 }
 
-function KanbanCard({ candidate, vendorName, jobTitle, onDragStart }: KanbanCardProps) {
+function KanbanCard({ candidate, vendorName, jobTitle, onDragStart, onSubmitClick }: KanbanCardProps) {
   const prob = computePlacementProb(candidate);
   const days = getDaysInStageSince(candidate.updatedAt);
   const skillLabel = candidate.skills?.slice(0, 20) ?? candidate.title ?? "—";
 
   return (
-    <Link
-      to="/candidates/$candidateId"
-      params={{ candidateId: candidate.id }}
-      className="block"
-      data-ocid="candidate-kanban-card"
-    >
-      <div
-        draggable
-        onDragStart={(e) =>
-          onDragStart(e, candidate.id, candidate.currentStage)
-        }
-        className="entity-card cursor-grab active:cursor-grabbing group"
+    <div className="entity-card-wrapper">
+      <Link
+        to="/candidates/$candidateId"
+        params={{ candidateId: candidate.id }}
+        className="block"
+        data-ocid="candidate-kanban-card"
       >
-        <div className="flex items-start justify-between gap-1 mb-1.5">
-          <span className="text-xs font-semibold text-foreground truncate flex-1 min-w-0 leading-tight">
-            {candidate.name}
-          </span>
-          <HealthBadge score={candidate.healthScore} size="sm" />
+        <div
+          draggable
+          onDragStart={(e) =>
+            onDragStart(e, candidate.id, candidate.currentStage)
+          }
+          className="entity-card cursor-grab active:cursor-grabbing group"
+        >
+          <div className="flex items-start justify-between gap-1 mb-1.5">
+            <span className="text-xs font-semibold text-foreground truncate flex-1 min-w-0 leading-tight">
+              {candidate.name}
+            </span>
+            <HealthBadge score={candidate.healthScore} size="sm" />
+          </div>
+          <p className="text-[11px] text-muted-foreground truncate mb-1.5">
+            {skillLabel}
+          </p>
+          {jobTitle && (
+            <p className="text-[10px] text-blue-600/70 truncate mb-1 flex items-center gap-1">
+              <Briefcase className="w-3 h-3 flex-shrink-0" />
+              {jobTitle}
+            </p>
+          )}
+          {vendorName && (
+            <p className="text-[10px] text-primary/70 truncate mb-1.5 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary/50 flex-shrink-0" />
+              {vendorName}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] text-muted-foreground">
+              {days}d in stage
+            </span>
+            <span className={cn("text-[10px] font-semibold", probColor(prob))}>
+              {prob}% placed
+            </span>
+          </div>
+          {candidate.updatedAt > 0 && (
+            <p className="text-[10px] text-muted-foreground/60 mt-1 truncate">
+              {getRelativeTime(candidate.updatedAt)}
+            </p>
+          )}
         </div>
-        <p className="text-[11px] text-muted-foreground truncate mb-1.5">
-          {skillLabel}
-        </p>
-        {jobTitle && (
-          <p className="text-[10px] text-blue-600/70 truncate mb-1 flex items-center gap-1">
-            <Briefcase className="w-3 h-3 flex-shrink-0" />
-            {jobTitle}
-          </p>
-        )}
-        {vendorName && (
-          <p className="text-[10px] text-primary/70 truncate mb-1.5 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 flex-shrink-0" />
-            {vendorName}
-          </p>
-        )}
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[10px] text-muted-foreground">
-            {days}d in stage
-          </span>
-          <span className={cn("text-[10px] font-semibold", probColor(prob))}>
-            {prob}% placed
-          </span>
-        </div>
-        {candidate.updatedAt > 0 && (
-          <p className="text-[10px] text-muted-foreground/60 mt-1 truncate">
-            {getRelativeTime(candidate.updatedAt)}
-          </p>
-        )}
-      </div>
-    </Link>
+      </Link>
+      {onSubmitClick && (
+        <Button 
+          size="sm" 
+          variant="ghost" 
+          className="w-full mt-1 h-6 text-[10px]"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onSubmitClick(candidate.id);
+          }}
+        >
+          <Briefcase className="w-3 h-3 mr-1" />
+          Submit to Job
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -159,6 +178,7 @@ interface KanbanColProps {
   isDragOver: boolean;
   onDragOver: (e: React.DragEvent) => void;
   onDragLeave: () => void;
+  onSubmitClick?: (candidateId: string) => void;
 }
 
 function KanbanCol({
@@ -171,6 +191,7 @@ function KanbanCol({
   isDragOver,
   onDragOver,
   onDragLeave,
+  onSubmitClick,
 }: KanbanColProps) {
   const needsApproval = stageRequiresApproval("candidate", stage);
   return (
@@ -223,6 +244,7 @@ function KanbanCol({
               vendorName={vendorName}
               jobTitle={jobTitle}
               onDragStart={onDragStart}
+              onSubmitClick={onSubmitClick}
             />
           );
         })}
@@ -278,25 +300,20 @@ function AddCandidateModal({
   const { data: vendors = [] } = useVendors();
   const { data: jobs = [] } = useJobs();
 
-  // Watch values for auto-population
   const salaryType = watch("salaryType");
   const selectedJobId = watch("jobId");
 
-  // Auto-populate budget when job is selected
   useEffect(() => {
     if (selectedJobId && selectedJobId !== "__none__") {
       const selectedJob = jobs.find(j => j.id === selectedJobId);
       if (selectedJob) {
-        // Auto-populate salary from job budget if available
         if (selectedJob.budget) {
           setValue("salaryAmount", selectedJob.budget.toString());
         }
-        // Auto-populate title from job title if empty
         const currentTitle = watch("title");
         if (!currentTitle && selectedJob.title) {
           setValue("title", selectedJob.title);
         }
-        // Auto-populate skills from job requirements if empty
         const currentSkills = watch("skills");
         if (!currentSkills && selectedJob.requirements) {
           setValue("skills", selectedJob.requirements);
@@ -307,7 +324,6 @@ function AddCandidateModal({
 
   async function onSubmit(data: AddCandidateFormData) {
     try {
-      // Calculate salary based on type
       const amount = data.salaryAmount ? Number(data.salaryAmount) : undefined;
       let salaryMin: number | undefined;
       let salaryMax: number | undefined;
@@ -322,18 +338,15 @@ function AddCandidateModal({
         }
       }
 
-      // Build the payload with correct snake_case column names for Supabase
-      // Only include fields that exist in your database schema
       const payload: Record<string, unknown> = {
         name: data.name,
         email: data.email,
-        current_stage: "Applied", // Default stage
-        health_score: 50, // Default health score
+        current_stage: "Applied",
+        health_score: 50,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
 
-      // Optional fields - only add if they have values
       if (data.phone) payload.phone = data.phone;
       if (data.title) payload.title = data.title;
       if (data.skills) payload.skills = data.skills;
@@ -342,19 +355,14 @@ function AddCandidateModal({
       if (salaryMin !== undefined) payload.salary_min = salaryMin;
       if (salaryMax !== undefined) payload.salary_max = salaryMax;
       
-      // Handle source - map to assigned_recruiter if it's a source value
       if (data.source && data.source !== "__none__") {
         payload.assigned_recruiter = data.source;
       }
       
-      // Handle vendor selection - use assigned_recruiter for vendor too
-      // or you might have a separate vendor_id column
-      // Check your schema to see which column name to use
       if (data.assignedRecruiter && data.assignedRecruiter !== "__none__") {
         payload.assigned_recruiter = data.assignedRecruiter;
       }
 
-      // Handle job selection
       if (data.jobId && data.jobId !== "__none__") {
         payload.job_id = data.jobId;
       }
@@ -371,7 +379,6 @@ function AddCandidateModal({
     }
   }
 
-  // Get selected job details for budget display
   const selectedJob = selectedJobId && selectedJobId !== "__none__" 
     ? jobs.find(j => j.id === selectedJobId) 
     : null;
@@ -487,7 +494,6 @@ function AddCandidateModal({
           </div>
         </div>
 
-        {/* Job Selection with Budget */}
         <div className="space-y-1">
           <Label className="text-xs">
             Job Position{" "}
@@ -533,7 +539,6 @@ function AddCandidateModal({
           )}
         </div>
 
-        {/* Vendor Selection - Maps to assigned_recruiter */}
         <div className="space-y-1">
           <Label className="text-xs">
             Vendor / Recruiter{" "}
@@ -569,7 +574,6 @@ function AddCandidateModal({
           />
         </div>
         
-        {/* Updated Salary Section - LPM/LPA with Amount */}
         <div className="space-y-1">
           <Label className="text-xs">Expected Salary</Label>
           <div className="grid grid-cols-3 gap-2">
@@ -644,6 +648,128 @@ function AddCandidateModal({
   );
 }
 
+// ── Submit to Job Modal ─────────────────────────────────────────────────────
+
+interface SubmitToJobFormData {
+  jobId: string;
+  rateAmount: string;
+  rateType: "lpm" | "lpa";
+}
+
+function SubmitToJobModal({ 
+  candidateId, 
+  open, 
+  onClose 
+}: { 
+  candidateId: string; 
+  open: boolean; 
+  onClose: () => void;
+}) {
+  const { register, handleSubmit, control, watch, formState: { isSubmitting } } = useForm<SubmitToJobFormData>({
+    defaultValues: {
+      rateType: "lpm",
+      rateAmount: "",
+    }
+  });
+  
+  const { data: jobs = [] } = useJobs();
+  const createSubmission = useCreateSubmission();
+  const rateType = watch("rateType");
+
+  async function onSubmit(data: SubmitToJobFormData) {
+    try {
+      const rateProposed = data.rateAmount ? Number(data.rateAmount) : undefined;
+      
+      await createSubmission.mutateAsync({
+        candidateId,
+        jobId: data.jobId,
+        rateProposed,
+        pipelineStage: "resume_sent",
+      });
+      
+      toast.success("Candidate submitted successfully");
+      onClose();
+    } catch (error) {
+      console.error("Submission error:", error);
+      toast.error("Failed to submit candidate");
+    }
+  }
+
+  return (
+    <AppModal open={open} onOpenChange={onClose} title="Submit to Job">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <div className="space-y-1">
+          <Label className="text-xs">Job *</Label>
+          <Controller
+            name="jobId"
+            control={control}
+            rules={{ required: true }}
+            render={({ field }) => (
+              <Select onValueChange={field.onChange} value={field.value}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Select job..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {jobs.map((job) => (
+                    <SelectItem key={job.id} value={job.id}>
+                      {job.title}
+                      {job.budget && ` · Budget: ${job.budget} LPA`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs">
+            Rate Proposed ({rateType === "lpm" ? "Lakhs per month" : "Lakhs per annum"})
+          </Label>
+          <div className="grid grid-cols-3 gap-2">
+            <Controller
+              name="rateType"
+              control={control}
+              render={({ field }) => (
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="lpm">LPM</SelectItem>
+                    <SelectItem value="lpa">LPA</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            <div className="col-span-2">
+              <Input
+                {...register("rateAmount")}
+                type="number"
+                step="0.1"
+                placeholder={`Enter amount`}
+                className="h-8 text-xs"
+              />
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            {rateType === "lpm" ? "Lakhs per month" : "Lakhs per annum"}
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="outline" size="sm" onClick={onClose} className="h-7 text-xs">
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={isSubmitting} className="h-7 text-xs">
+            {isSubmitting ? "Submitting..." : "Submit Candidate"}
+          </Button>
+        </div>
+      </form>
+    </AppModal>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function CandidatesPage() {
@@ -658,8 +784,11 @@ export default function CandidatesPage() {
   const [jobFilter, setJobFilter] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  
+  // Submit to job modal state
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
 
-  // Build lookup maps
   const vendorMap = useMemo(
     () => new Map(vendors.map((v) => [v.id, v])),
     [vendors],
@@ -739,11 +868,15 @@ export default function CandidatesPage() {
     }
   }
 
+  const handleSubmitClick = (candidateId: string) => {
+    setSelectedCandidateId(candidateId);
+    setShowSubmitModal(true);
+  };
+
   if (isLoading) return <PageLoadingSpinner />;
 
   return (
     <div className="flex flex-col h-full" data-ocid="candidates-page">
-      {/* No Supabase banner */}
       {!getSupabaseCreds() && (
         <div
           className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/30 flex-shrink-0"
@@ -843,7 +976,6 @@ export default function CandidatesPage() {
           </TabsList>
         </div>
 
-        {/* Kanban */}
         <TabsContent value="kanban" className="flex-1 overflow-auto m-0">
           {filtered.length === 0 ? (
             <div className="p-8">
@@ -874,13 +1006,13 @@ export default function CandidatesPage() {
                     setDragOver(stage);
                   }}
                   onDragLeave={() => setDragOver(null)}
+                  onSubmitClick={handleSubmitClick}
                 />
               ))}
             </div>
           )}
         </TabsContent>
 
-        {/* List view */}
         <TabsContent value="list" className="flex-1 overflow-auto m-0">
           {filtered.length === 0 ? (
             <div className="p-8">
@@ -1055,6 +1187,15 @@ export default function CandidatesPage() {
       )}
 
       <AddCandidateModal open={showAdd} onClose={() => setShowAdd(false)} />
+      
+      <SubmitToJobModal 
+        candidateId={selectedCandidateId || ""} 
+        open={showSubmitModal} 
+        onClose={() => {
+          setShowSubmitModal(false);
+          setSelectedCandidateId(null);
+        }} 
+      />
     </div>
   );
 }
