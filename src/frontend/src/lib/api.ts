@@ -253,6 +253,7 @@ function mapCandidateRow(r: any): Candidate {
     salaryMax: r.salary_max != null ? safeNumber(r.salary_max) : undefined,
     notes: r.notes ?? r.experience ?? undefined,
     assignedRecruiter: r.assigned_recruiter ?? r.assignedRecruiter ?? undefined,
+    vendorId: r.vendor_id ? safeString(r.vendor_id) : undefined,
     createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
     updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
   };

@@ -180,6 +180,7 @@ export interface Candidate {
   salaryMax?: number;
   notes?: string;
   assignedRecruiter?: string;
+  vendorId?: string;
   createdAt: number;
   updatedAt: number;
 }

@@ -53,6 +53,8 @@ import {
   Phone,
   Search,
   Send,
+  Square,
+  SquareCheck,
   Trash2,
   Upload,
   User,
@@ -436,53 +438,99 @@ function DropZone({ onFileSelected }: DropZoneProps) {
 interface SubmitJobModalProps {
   resume: Resume;
   onClose: () => void;
-  onSubmitted: (jobTitle: string) => void;
+  onSubmitted: (count: number) => void;
 }
 
 function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
-  const { data: jobs = [], isLoading: jobsLoading } = useJobs();
-  const { data: vendors = [] } = useVendors();
+  const { data: allJobs = [], isLoading: jobsLoading } = useJobs();
+  const { data: vendors = [], isLoading: vendorsLoading } = useVendors();
   const createSubmission = useCreateSubmission();
 
-  const [selectedJobId, setSelectedJobId] = useState("");
-  const [selectedVendorId, setSelectedVendorId] = useState("");
-  const [notes, setNotes] = useState("");
-
-  const openJobs = jobs.filter((j) =>
-    ["open", "active"].includes((j.status ?? "").toLowerCase()),
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [selectedVendorId, setSelectedVendorId] = useState(
+    resume.sourceVendorId ?? "",
   );
+  const [notes, setNotes] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleSubmit() {
-    if (!selectedJobId) {
-      toast.error("Please select a job to submit to.");
-      return;
-    }
-    const job = openJobs.find((j) => j.id === selectedJobId);
-    try {
-      await createSubmission.mutateAsync({
-        candidateId: resume.id,
-        resumeId: resume.id,
-        jobId: selectedJobId,
-        vendorId: selectedVendorId || undefined,
-        pipelineStage: "resume_sent",
-        notes: notes.trim() || undefined,
-        submittedBy: resume.candidateName,
-      });
-      onSubmitted(job?.title ?? "Job");
-      onClose();
-    } catch {
-      // handled by mutation
+  // Case-insensitive filter — fall back to ALL jobs if none are open/active
+  // so the dropdown is never empty even if statuses are stored differently.
+  const openJobs = (() => {
+    const filtered = allJobs.filter((j) => {
+      const s = (j.status ?? "").toLowerCase().trim();
+      return (
+        s === "open" ||
+        s === "active" ||
+        s === "open - active" ||
+        s === "open-active"
+      );
+    });
+    // Fallback: show all jobs rather than an empty dropdown
+    return filtered.length > 0 ? filtered : allJobs;
+  })();
+
+  function toggleJob(jobId: string) {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (selectedJobIds.size === openJobs.length) {
+      setSelectedJobIds(new Set());
+    } else {
+      setSelectedJobIds(new Set(openJobs.map((j) => j.id)));
     }
   }
+
+  async function handleSubmit() {
+    if (selectedJobIds.size === 0) {
+      toast.error("Please select at least one job to submit to.");
+      return;
+    }
+    setIsSubmitting(true);
+    let successCount = 0;
+    const jobIds = Array.from(selectedJobIds);
+    try {
+      for (const jobId of jobIds) {
+        try {
+          await createSubmission.mutateAsync({
+            candidateId: resume.id,
+            resumeId: resume.id,
+            jobId,
+            vendorId: selectedVendorId || undefined,
+            pipelineStage: "resume_sent",
+            notes: notes.trim() || undefined,
+            submittedBy: resume.candidateName,
+          });
+          successCount++;
+        } catch {
+          // individual failures handled by mutation toast; continue with rest
+        }
+      }
+      if (successCount > 0) {
+        onSubmitted(successCount);
+        onClose();
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  const allSelected =
+    openJobs.length > 0 && selectedJobIds.size === openJobs.length;
 
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
       data-ocid="submit-job-modal"
     >
-      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md">
+      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-border">
+        <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-border flex-shrink-0">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-foreground font-display">
               Submit to Job
@@ -502,19 +550,35 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5 space-y-4">
-          {/* Step 1 — Job */}
+        <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
+          {/* Step 1 — Jobs (multi-select checkboxes) */}
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium text-foreground">
-              Job <span className="text-destructive">*</span>
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium text-foreground">
+                Select Job(s) <span className="text-destructive">*</span>
+              </Label>
+              {openJobs.length > 1 && (
+                <button
+                  type="button"
+                  onClick={toggleAll}
+                  className="text-[10px] text-primary hover:underline"
+                  data-ocid="submit-select-all-jobs"
+                >
+                  {allSelected ? "Deselect all" : "Select all"}
+                </button>
+              )}
+            </div>
             {jobsLoading ? (
-              <Skeleton className="h-9 w-full rounded-md" />
+              <div className="space-y-1.5">
+                {[0, 1, 2].map((i) => (
+                  <Skeleton key={i} className="h-9 w-full rounded-md" />
+                ))}
+              </div>
             ) : openJobs.length === 0 ? (
               <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-muted/50 border border-border">
                 <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
                 <p className="text-xs text-muted-foreground">
-                  No open jobs found.{" "}
+                  No jobs found.{" "}
                   <Link to="/jobs" className="underline text-primary">
                     Add a job
                   </Link>{" "}
@@ -522,31 +586,60 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
                 </p>
               </div>
             ) : (
-              <Select value={selectedJobId} onValueChange={setSelectedJobId}>
-                <SelectTrigger
-                  className="h-9 text-sm"
-                  data-ocid="submit-job-select"
-                >
-                  <SelectValue placeholder="Select open job…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {openJobs.map((job) => (
-                    <SelectItem key={job.id} value={job.id}>
-                      <span className="font-medium">{job.title}</span>
-                      {job.clientName && (
-                        <span className="ml-1.5 text-muted-foreground text-xs">
-                          · {job.clientName}
+              <div
+                className="rounded-lg border border-border divide-y divide-border max-h-52 overflow-y-auto"
+                data-ocid="submit-jobs-list"
+              >
+                {openJobs.map((job) => {
+                  const checked = selectedJobIds.has(job.id);
+                  return (
+                    <button
+                      key={job.id}
+                      type="button"
+                      onClick={() => toggleJob(job.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/40 ${checked ? "bg-primary/5" : ""}`}
+                      data-ocid={`submit-job-option-${job.id}`}
+                    >
+                      <span className="flex-shrink-0 text-primary">
+                        {checked ? (
+                          <SquareCheck className="h-4 w-4" />
+                        ) : (
+                          <Square className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="text-xs font-medium text-foreground block truncate">
+                          {job.title}
+                        </span>
+                        {(job.clientName || job.rateAmount) && (
+                          <span className="text-[10px] text-muted-foreground block truncate">
+                            {[
+                              job.clientName,
+                              job.rateAmount &&
+                                `${job.rateAmount} ${job.rateType ?? ""}`.trim(),
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        )}
+                      </span>
+                      {job.status && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex-shrink-0 capitalize">
+                          {job.status}
                         </span>
                       )}
-                      {job.rateAmount && (
-                        <span className="ml-1.5 text-muted-foreground text-xs">
-                          · {job.rateAmount} {job.rateType}
-                        </span>
-                      )}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {selectedJobIds.size > 0 && (
+              <p className="text-[10px] text-primary font-medium">
+                {selectedJobIds.size} job{selectedJobIds.size > 1 ? "s" : ""}{" "}
+                selected
+                {selectedJobIds.size > 1 &&
+                  " — will create one submission per job"}
+              </p>
             )}
           </div>
 
@@ -558,35 +651,40 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
                 (optional)
               </span>
             </Label>
-            <Select
-              value={selectedVendorId}
-              onValueChange={setSelectedVendorId}
-            >
-              <SelectTrigger
-                className="h-9 text-sm"
-                data-ocid="submit-vendor-select"
+            {vendorsLoading ? (
+              <Skeleton className="h-9 w-full rounded-md" />
+            ) : (
+              <Select
+                value={selectedVendorId}
+                onValueChange={setSelectedVendorId}
               >
-                <SelectValue placeholder="Select vendor…" />
-              </SelectTrigger>
-              <SelectContent>
-                {vendors.length === 0 ? (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">
-                    No vendors found. Add a vendor first.
-                  </div>
-                ) : (
-                  vendors.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>
-                      {v.name}
-                      {v.company && (
-                        <span className="ml-1.5 text-muted-foreground text-xs">
-                          · {v.company}
-                        </span>
-                      )}
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
+                <SelectTrigger
+                  className="h-9 text-sm"
+                  data-ocid="submit-vendor-select"
+                >
+                  <SelectValue placeholder="Select vendor…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— None —</SelectItem>
+                  {vendors.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      No vendors found. Add vendors in the Vendors section.
+                    </div>
+                  ) : (
+                    vendors.map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.name}
+                        {v.company && (
+                          <span className="ml-1.5 text-muted-foreground text-xs">
+                            · {v.company}
+                          </span>
+                        )}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {/* Notes */}
@@ -601,24 +699,24 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Any notes about this submission…"
-              className="text-sm min-h-[72px] resize-none"
+              className="text-sm min-h-[64px] resize-none"
               data-ocid="submit-notes"
             />
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 px-6 py-4 border-t border-border">
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-border flex-shrink-0">
           <Button type="button" variant="ghost" size="sm" onClick={onClose}>
             Cancel
           </Button>
           <Button
             size="sm"
             onClick={handleSubmit}
-            disabled={createSubmission.isPending || !selectedJobId}
+            disabled={isSubmitting || selectedJobIds.size === 0}
             data-ocid="submit-job-confirm-btn"
           >
-            {createSubmission.isPending ? (
+            {isSubmitting ? (
               <>
                 <div className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin mr-1.5" />
                 Submitting…
@@ -626,7 +724,9 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
             ) : (
               <>
                 <Send className="h-3.5 w-3.5 mr-1.5" />
-                Submit Profile
+                {selectedJobIds.size > 1
+                  ? `Submit to ${selectedJobIds.size} Jobs`
+                  : "Submit Profile"}
               </>
             )}
           </Button>
@@ -2157,10 +2257,17 @@ export default function ResumesPage() {
         <SubmitJobModal
           resume={submitResume}
           onClose={() => setSubmitResume(null)}
-          onSubmitted={(jobTitle) => {
-            toast.success("Submitted!", {
-              description: `${submitResume.candidateName} → ${jobTitle}`,
-            });
+          onSubmitted={(count) => {
+            toast.success(
+              count > 1
+                ? `Submitted to ${count} jobs successfully`
+                : "Submitted successfully!",
+              {
+                description: submitResume.candidateName
+                  ? `${submitResume.candidateName}'s profile has been submitted.`
+                  : undefined,
+              },
+            );
           }}
         />
       )}

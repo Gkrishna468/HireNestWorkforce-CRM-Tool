@@ -440,6 +440,7 @@ export default function CandidatesPage() {
   const createApproval = useCreateApprovalItem();
   const [showAdd, setShowAdd] = useState(false);
   const [filter, setFilter] = useState("");
+  const [vendorFilter, setVendorFilter] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
@@ -449,12 +450,18 @@ export default function CandidatesPage() {
     [vendors],
   );
 
-  const filtered = candidates.filter(
-    (c) =>
+  const filtered = candidates.filter((c) => {
+    const matchText =
       c.name.toLowerCase().includes(filter.toLowerCase()) ||
       (c.skills ?? "").toLowerCase().includes(filter.toLowerCase()) ||
-      (c.title ?? "").toLowerCase().includes(filter.toLowerCase()),
-  );
+      (c.title ?? "").toLowerCase().includes(filter.toLowerCase());
+    const matchVendor =
+      !vendorFilter ||
+      c.vendorId === vendorFilter ||
+      // Fall back to assignedRecruiter which may hold vendorId for older records
+      c.assignedRecruiter === vendorFilter;
+    return matchText && matchVendor;
+  });
 
   const byStage: Record<string, Candidate[]> = {};
   for (const stage of CANDIDATE_STAGES) byStage[stage] = [];
@@ -550,7 +557,7 @@ export default function CandidatesPage() {
         }
       />
 
-      <div className="px-4 py-2 border-b border-border bg-card">
+      <div className="px-4 py-2 border-b border-border bg-card flex flex-wrap items-center gap-2">
         <Input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -558,6 +565,26 @@ export default function CandidatesPage() {
           className="h-7 text-xs max-w-xs"
           data-ocid="candidates-filter"
         />
+        <Select
+          value={vendorFilter || "__all__"}
+          onValueChange={(v) => setVendorFilter(v === "__all__" ? "" : v)}
+        >
+          <SelectTrigger
+            className="h-7 text-xs w-44"
+            data-ocid="candidates-vendor-filter"
+          >
+            <SelectValue placeholder="All Vendors" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Vendors</SelectItem>
+            {vendors.map((v) => (
+              <SelectItem key={v.id} value={v.id}>
+                {v.name}
+                {v.company ? ` · ${v.company}` : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <Tabs
