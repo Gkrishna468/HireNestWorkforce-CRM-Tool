@@ -394,6 +394,7 @@ function mapSubmissionRow(r: any): Submission {
     jobId: safeString(r.job_id ?? r.jobId ?? ""),
     jobTitle: r.job_title ?? r.jobTitle ?? undefined,
     clientName: r.client_name ?? r.clientName ?? undefined,
+    // Use vendor_id (not source_vendor_id)
     vendorId: r.vendor_id ?? r.vendorId ?? undefined,
     resumeId: r.resume_id ?? r.resumeId ?? undefined,
     submittedBy: r.submitted_by ?? r.submittedBy ?? undefined,
@@ -414,7 +415,6 @@ function mapSubmissionRow(r: any): Submission {
     daysInStage: getDaysInStage(lastStageChangeAt, createdAtStr),
   };
 }
-
 // ── Vendors ──────────────────────────────────────────────────────────────────
 
 export async function getVendors(_actor: Actor): Promise<Vendor[]> {
@@ -946,52 +946,48 @@ export async function createSubmission(
   _actor: Actor,
   input: SubmissionFormInput,
 ): Promise<Submission> {
-  // STRICT: only columns that exist in the submissions table
-  const submissionPayload = {
-    resume_id: input.resumeId ?? null,
-    job_id: input.jobId ?? null,
-    source_vendor_id: input.vendorId ?? null,
-    submitting_recruiter_id: null,
-    current_stage: input.pipelineStage ?? "resume_sent",
+  // Build payload with ONLY columns that exist in submissions table
+  // Based on your error, these are the likely correct column names
+  const submissionPayload: Record<string, unknown> = {
+    candidate_id: input.candidateId,
+    job_id: input.jobId,
+    status: "pending",
+    pipeline_stage: input.pipelineStage ?? "resume_sent",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
 
-  console.log("Submission payload:", JSON.stringify(submissionPayload));
-
-  const row = await supabaseInsert<Record<string, unknown>>(
-    "submissions",
-    submissionPayload,
-  );
-  if (
-    (
-      row as {
-        error?: {
-          message?: string;
-          details?: string;
-          hint?: string;
-          code?: string;
-        };
-      }
-    ).error
-  ) {
-    const e = (
-      row as {
-        error: {
-          message?: string;
-          details?: string;
-          hint?: string;
-          code?: string;
-        };
-      }
-    ).error;
-    console.error(
-      "Supabase submission error:",
-      e.message,
-      e.details,
-      e.hint,
-      e.code,
-    );
+  // Optional fields - only add if provided
+  if (input.resumeId) submissionPayload.resume_id = input.resumeId;
+  
+  // Use vendor_id (not source_vendor_id) - this is the standard column name
+  if (input.vendorId) submissionPayload.vendor_id = input.vendorId;
+  
+  // Rate proposed - store as numeric value (LPM/LPA amount, not hourly)
+  if (input.rateProposed !== undefined && input.rateProposed !== null) {
+    submissionPayload.rate_proposed = input.rateProposed;
   }
-  return mapSubmissionRow(row);
+
+  console.log("Submission payload:", JSON.stringify(submissionPayload, null, 2));
+
+  try {
+    const row = await supabaseInsert<Record<string, unknown>>(
+      "submissions",
+      submissionPayload,
+    );
+    
+    // Check if response has error
+    if ((row as { error?: { message?: string; details?: string } }).error) {
+      const e = (row as { error: { message?: string; details?: string } }).error;
+      console.error("Supabase submission error:", e.message, e.details);
+      throw new Error(e.message || "Failed to create submission");
+    }
+    
+    return mapSubmissionRow(row);
+  } catch (error) {
+    console.error("Create submission error:", error);
+    throw error;
+  }
 }
 
 export async function updateSubmission(
@@ -1035,6 +1031,7 @@ export async function updateSubmissionStage(
     rejection_reason: update.rejectionReason ?? null,
     notes: update.notes ?? null,
     last_stage_change_at: now,
+    updated_at: now,
     // If placed, also update status
     ...(update.stage === "placed" ? { status: "placed" } : {}),
     ...(update.stage === "rejected" ? { status: "rejected" } : {}),
@@ -1063,6 +1060,7 @@ export async function updateSubmissionStage(
 export async function softDeleteSubmission(id: string): Promise<void> {
   await supabaseUpdate("submissions", id, {
     deleted_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   });
 }
 
