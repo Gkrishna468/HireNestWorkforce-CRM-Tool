@@ -597,68 +597,25 @@ export function useSubmissionsForResume(resumeId: string) {
   });
 }
 
-// In your use-crm.ts hooks file
+// FIXED: useCreateSubmission using api.createSubmission instead of undefined createClient
 export function useCreateSubmission() {
-  const queryClient = useQueryClient();
-  
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: {
-      candidateId: string;
-      jobId: string;
-      rateProposed?: number;
-      pipelineStage: string;
-    }) => {
-      const supabase = createClient();
-      
-      // Try candidate_id first, if that fails try profile_id
-      const payload: any = {
-        job_id: data.jobId,
-        rate_proposed: data.rateProposed,
-        pipeline_stage: data.pipelineStage,
-        status: 'pending',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      
-      // Try candidate_id (most common)
-      payload.candidate_id = data.candidateId;
-      
-      const { data: result, error } = await supabase
-        .from('submissions')
-        .insert(payload)
-        .select()
-        .single();
-      
-      if (error) {
-        console.error('Submission insert error:', error);
-        
-        // If column not found error, try alternative column name
-        if (error.message?.includes('candidate_id')) {
-          console.log('Trying profile_id instead...');
-          delete payload.candidate_id;
-          payload.profile_id = data.candidateId;
-          
-          const { data: result2, error: error2 } = await supabase
-            .from('submissions')
-            .insert(payload)
-            .select()
-            .single();
-            
-          if (error2) throw error2;
-          return result2;
-        }
-        
-        throw error;
-      }
-      
-      return result;
+    mutationFn: (input: SubmissionFormInput) => {
+      checkSupabaseOrThrow();
+      return api.createSubmission(null, input);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['submissions'] });
-      queryClient.invalidateQueries({ queryKey: ['candidates'] });
+      qc.invalidateQueries({ queryKey: QK.submissions });
+      qc.invalidateQueries({ queryKey: ["submissions"] });
+      qc.invalidateQueries({ queryKey: QK.candidates });
+      qc.invalidateQueries({ queryKey: QK.jobs });
+      qc.invalidateQueries({ queryKey: QK.pulseDashboard });
     },
+    onError: handleMutationError,
   });
 }
+
 export function useUpdateSubmissionStage() {
   const qc = useQueryClient();
   return useMutation({
