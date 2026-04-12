@@ -30,6 +30,7 @@ import {
   useCreateCandidate,
   useUpdateEntityStage,
   useVendors,
+  useJobs,
 } from "@/hooks/use-crm";
 import { getSupabaseCreds } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -37,11 +38,12 @@ import { getRelativeTime } from "@/lib/utils/health";
 import { CANDIDATE_STAGES, stageRequiresApproval } from "@/lib/utils/pipeline";
 import type { Vendor } from "@/types/crm";
 import type { Candidate } from "@/types/crm";
+import type { Job } from "@/types/crm";
 import type { CandidateFormInput } from "@/types/forms";
 import { Link } from "@tanstack/react-router";
-import { AlertCircle, GripVertical, Lock, Plus, UserIcon } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { AlertCircle, GripVertical, Lock, Plus, UserIcon, Briefcase } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
 
 // ── Placement probability logic ──────────────────────────────────────────────
@@ -79,6 +81,7 @@ function probColor(prob: number): string {
 interface KanbanCardProps {
   candidate: Candidate;
   vendorName?: string;
+  jobTitle?: string;
   onDragStart: (
     e: React.DragEvent,
     candidateId: string,
@@ -86,7 +89,7 @@ interface KanbanCardProps {
   ) => void;
 }
 
-function KanbanCard({ candidate, vendorName, onDragStart }: KanbanCardProps) {
+function KanbanCard({ candidate, vendorName, jobTitle, onDragStart }: KanbanCardProps) {
   const prob = computePlacementProb(candidate);
   const days = getDaysInStageSince(candidate.updatedAt);
   const skillLabel = candidate.skills?.slice(0, 20) ?? candidate.title ?? "—";
@@ -114,6 +117,12 @@ function KanbanCard({ candidate, vendorName, onDragStart }: KanbanCardProps) {
         <p className="text-[11px] text-muted-foreground truncate mb-1.5">
           {skillLabel}
         </p>
+        {jobTitle && (
+          <p className="text-[10px] text-blue-600/70 truncate mb-1 flex items-center gap-1">
+            <Briefcase className="w-3 h-3 flex-shrink-0" />
+            {jobTitle}
+          </p>
+        )}
         {vendorName && (
           <p className="text-[10px] text-primary/70 truncate mb-1.5 flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-primary/50 flex-shrink-0" />
@@ -144,6 +153,7 @@ interface KanbanColProps {
   stage: string;
   candidates: Candidate[];
   vendorMap: Map<string, Vendor>;
+  jobMap: Map<string, Job>;
   onDragStart: (e: React.DragEvent, id: string, from: string) => void;
   onDrop: (e: React.DragEvent, toStage: string) => void;
   isDragOver: boolean;
@@ -155,6 +165,7 @@ function KanbanCol({
   stage,
   candidates,
   vendorMap,
+  jobMap,
   onDragStart,
   onDrop,
   isDragOver,
@@ -204,11 +215,13 @@ function KanbanCol({
           const vendorName = c.assignedRecruiter
             ? undefined
             : vendorMap.get(c.assignedRecruiter ?? "")?.name;
+          const jobTitle = c.jobId ? jobMap.get(c.jobId)?.title : undefined;
           return (
             <KanbanCard
               key={c.id}
               candidate={c}
               vendorName={vendorName}
+              jobTitle={jobTitle}
               onDragStart={onDragStart}
             />
           );
@@ -227,6 +240,12 @@ function KanbanCol({
 
 // ── Add Candidate form ────────────────────────────────────────────────────────
 
+interface AddCandidateFormData extends CandidateFormInput {
+  salaryType: "lpm" | "lpa";
+  salaryAmount: string;
+  jobId?: string;
+}
+
 function AddCandidateModal({
   open,
   onClose,
@@ -236,25 +255,93 @@ function AddCandidateModal({
     handleSubmit,
     reset,
     setValue,
+    watch,
+    control,
     formState: { errors, isSubmitting },
-  } = useForm<CandidateFormInput>();
+  } = useForm<AddCandidateFormData>({
+    defaultValues: {
+      salaryType: "lpa",
+      salaryAmount: "",
+    },
+  });
+  
   const createCandidate = useCreateCandidate();
   const { data: vendors = [] } = useVendors();
+  const { data: jobs = [] } = useJobs();
 
-  async function onSubmit(data: CandidateFormInput) {
+  // Watch values for auto-population
+  const salaryType = watch("salaryType");
+  const selectedJobId = watch("jobId");
+
+  // Auto-populate budget when job is selected
+  useEffect(() => {
+    if (selectedJobId && selectedJobId !== "__none__") {
+      const selectedJob = jobs.find(j => j.id === selectedJobId);
+      if (selectedJob) {
+        // Auto-populate salary from job budget if available
+        if (selectedJob.budget) {
+          setValue("salaryAmount", selectedJob.budget.toString());
+        }
+        // Auto-populate title from job title if empty
+        const currentTitle = watch("title");
+        if (!currentTitle && selectedJob.title) {
+          setValue("title", selectedJob.title);
+        }
+        // Auto-populate skills from job requirements if empty
+        const currentSkills = watch("skills");
+        if (!currentSkills && selectedJob.requirements) {
+          setValue("skills", selectedJob.requirements);
+        }
+      }
+    }
+  }, [selectedJobId, jobs, setValue, watch]);
+
+  async function onSubmit(data: AddCandidateFormData) {
     try {
-      await createCandidate.mutateAsync({
-        ...data,
-        salaryMin: data.salaryMin ? Number(data.salaryMin) : undefined,
-        salaryMax: data.salaryMax ? Number(data.salaryMax) : undefined,
-      });
-      toast.success("Candidate added");
+      // Calculate salary based on type
+      const amount = data.salaryAmount ? Number(data.salaryAmount) : undefined;
+      let salaryMin: number | undefined;
+      let salaryMax: number | undefined;
+      
+      if (amount) {
+        if (data.salaryType === "lpm") {
+          salaryMin = amount;
+          salaryMax = amount;
+        } else {
+          salaryMin = amount;
+          salaryMax = amount;
+        }
+      }
+
+      const submitData: CandidateFormInput = {
+        name: data.name,
+        email: data.email,
+        phone: data.phone,
+        title: data.title,
+        skills: data.skills,
+        notes: data.notes,
+        assignedRecruiter: data.assignedRecruiter,
+        vendorId: data.vendorId,
+        jobId: data.jobId === "__none__" ? undefined : data.jobId,
+        linkedinUrl: data.linkedinUrl,
+        salaryMin,
+        salaryMax,
+      };
+
+      await createCandidate.mutateAsync(submitData);
+      toast.success("Candidate added successfully");
       reset();
       onClose();
-    } catch {
+    } catch (error) {
+      console.error("Error adding candidate:", error);
       toast.error("Failed to add candidate");
     }
   }
+
+  // Get selected job details for budget display
+  const selectedJob = selectedJobId && selectedJobId !== "__none__" 
+    ? jobs.find(j => j.id === selectedJobId) 
+    : null;
 
   return (
     <AppModal
@@ -272,16 +359,25 @@ function AddCandidateModal({
           <div className="space-y-1">
             <Label className="text-xs">Name *</Label>
             <Input
-              {...register("name", { required: true })}
+              {...register("name", { required: "Name is required" })}
               placeholder="Full name"
               className={cn("h-8 text-xs", errors.name && "border-destructive")}
               data-ocid="candidate-name-input"
             />
+            {errors.name && (
+              <span className="text-[10px] text-destructive">{errors.name.message}</span>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Email *</Label>
             <Input
-              {...register("email", { required: true })}
+              {...register("email", { 
+                required: "Email is required",
+                pattern: {
+                  value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
+                  message: "Invalid email address"
+                }
+              })}
               type="email"
               placeholder="email@domain.com"
               className={cn(
@@ -290,6 +386,9 @@ function AddCandidateModal({
               )}
               data-ocid="candidate-email-input"
             />
+            {errors.email && (
+              <span className="text-[10px] text-destructive">{errors.email.message}</span>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
@@ -330,23 +429,76 @@ function AddCandidateModal({
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Source</Label>
-            <Select onValueChange={(v) => setValue("assignedRecruiter", v)}>
-              <SelectTrigger
-                className="h-8 text-xs"
-                data-ocid="candidate-source-select"
-              >
-                <SelectValue placeholder="Select source" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="referral">Referral</SelectItem>
-                <SelectItem value="job board">Job Board</SelectItem>
-                <SelectItem value="linkedin">LinkedIn</SelectItem>
-                <SelectItem value="agency">Agency</SelectItem>
-                <SelectItem value="direct">Direct</SelectItem>
-              </SelectContent>
-            </Select>
+            <Controller
+              name="assignedRecruiter"
+              control={control}
+              render={({ field }) => (
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <SelectTrigger
+                    className="h-8 text-xs"
+                    data-ocid="candidate-source-select"
+                  >
+                    <SelectValue placeholder="Select source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="referral">Referral</SelectItem>
+                    <SelectItem value="job board">Job Board</SelectItem>
+                    <SelectItem value="linkedin">LinkedIn</SelectItem>
+                    <SelectItem value="agency">Agency</SelectItem>
+                    <SelectItem value="direct">Direct</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
           </div>
         </div>
+
+        {/* Job Selection with Budget */}
+        <div className="space-y-1">
+          <Label className="text-xs">
+            Job Position{" "}
+            <span className="text-muted-foreground font-normal">
+              (link to existing job post)
+            </span>
+          </Label>
+          <Controller
+            name="jobId"
+            control={control}
+            render={({ field }) => (
+              <Select 
+                onValueChange={field.onChange} 
+                value={field.value || "__none__"}
+              >
+                <SelectTrigger
+                  className="h-8 text-xs"
+                  data-ocid="candidate-job-select"
+                >
+                  <SelectValue placeholder="Select job position (optional)…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— None —</SelectItem>
+                  {jobs.map((job) => (
+                    <SelectItem key={job.id} value={job.id}>
+                      {job.title}
+                      {job.budget ? ` · Budget: ${job.budget} LPA` : ""}
+                      {job.location ? ` · ${job.location}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+          {selectedJob && selectedJob.budget && (
+            <div className="flex items-center gap-2 mt-1 p-1.5 bg-blue-50/50 rounded border border-blue-100">
+              <Briefcase className="w-3 h-3 text-blue-500" />
+              <span className="text-[10px] text-blue-700">
+                Job Budget: <strong>{selectedJob.budget} LPA</strong>
+                {selectedJob.budgetType && ` (${selectedJob.budgetType})`}
+              </span>
+            </div>
+          )}
+        </div>
+
         <div className="space-y-1">
           <Label className="text-xs">
             Vendor{" "}
@@ -354,50 +506,76 @@ function AddCandidateModal({
               (which vendor is processing this profile)
             </span>
           </Label>
-          <Select
-            onValueChange={(v) =>
-              setValue("vendorId", v === "__none__" ? undefined : v)
-            }
-          >
-            <SelectTrigger
-              className="h-8 text-xs"
-              data-ocid="candidate-vendor-select"
-            >
-              <SelectValue placeholder="Select vendor (optional)…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">— None —</SelectItem>
-              {vendors.map((v) => (
-                <SelectItem key={v.id} value={v.id}>
-                  {v.name}
-                  {v.company ? ` · ${v.company}` : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Controller
+            name="vendorId"
+            control={control}
+            render={({ field }) => (
+              <Select 
+                onValueChange={(v) => field.onChange(v === "__none__" ? undefined : v)} 
+                value={field.value || "__none__"}
+              >
+                <SelectTrigger
+                  className="h-8 text-xs"
+                  data-ocid="candidate-vendor-select"
+                >
+                  <SelectValue placeholder="Select vendor (optional)…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— None —</SelectItem>
+                  {vendors.map((v) => (
+                    <SelectItem key={v.id} value={v.id}>
+                      {v.name}
+                      {v.company ? ` · ${v.company}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Salary Min ($)</Label>
-            <Input
-              {...register("salaryMin", { valueAsNumber: true })}
-              type="number"
-              placeholder="80000"
-              className="h-8 text-xs"
-              data-ocid="candidate-salary-min-input"
+        
+        {/* Updated Salary Section - LPM/LPA with Amount */}
+        <div className="space-y-1">
+          <Label className="text-xs">Expected Salary</Label>
+          <div className="grid grid-cols-3 gap-2">
+            <Controller
+              name="salaryType"
+              control={control}
+              render={({ field }) => (
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <SelectTrigger className="h-8 text-xs" data-ocid="candidate-salary-type-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="lpm">LPM</SelectItem>
+                    <SelectItem value="lpa">LPA</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             />
+            <div className="col-span-2">
+              <Input
+                {...register("salaryAmount", { 
+                  valueAsNumber: false,
+                  validate: (value) => {
+                    if (!value) return true;
+                    return !isNaN(Number(value)) || "Please enter a valid number";
+                  }
+                })}
+                type="number"
+                step="0.1"
+                placeholder={`Enter amount in ${salaryType === "lpm" ? "Lakhs per month" : "Lakhs per annum"}`}
+                className="h-8 text-xs"
+                data-ocid="candidate-salary-amount-input"
+              />
+            </div>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Salary Max ($)</Label>
-            <Input
-              {...register("salaryMax", { valueAsNumber: true })}
-              type="number"
-              placeholder="120000"
-              className="h-8 text-xs"
-              data-ocid="candidate-salary-max-input"
-            />
-          </div>
+          <p className="text-[10px] text-muted-foreground">
+            {salaryType === "lpm" ? "Lakhs per month" : "Lakhs per annum"}
+            {selectedJob?.budget && " · Auto-populated from job budget"}
+          </p>
         </div>
+        
         <div className="space-y-1">
           <Label className="text-xs">Availability</Label>
           <Input
@@ -419,11 +597,11 @@ function AddCandidateModal({
           <Button
             type="submit"
             size="sm"
-            disabled={isSubmitting}
+            disabled={isSubmitting || createCandidate.isPending}
             className="h-7 text-xs"
             data-ocid="add-candidate-submit"
           >
-            {isSubmitting ? "Adding..." : "Add Candidate"}
+            {isSubmitting || createCandidate.isPending ? "Adding..." : "Add Candidate"}
           </Button>
         </div>
       </form>
@@ -436,18 +614,25 @@ function AddCandidateModal({
 export default function CandidatesPage() {
   const { data: candidates = [], isLoading } = useCandidates();
   const { data: vendors = [] } = useVendors();
+  const { data: jobs = [] } = useJobs();
   const updateStage = useUpdateEntityStage();
   const createApproval = useCreateApprovalItem();
   const [showAdd, setShowAdd] = useState(false);
   const [filter, setFilter] = useState("");
   const [vendorFilter, setVendorFilter] = useState("");
+  const [jobFilter, setJobFilter] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [dragOver, setDragOver] = useState<string | null>(null);
 
-  // Build vendor lookup map for kanban cards
+  // Build lookup maps
   const vendorMap = useMemo(
     () => new Map(vendors.map((v) => [v.id, v])),
     [vendors],
+  );
+  
+  const jobMap = useMemo(
+    () => new Map(jobs.map((j) => [j.id, j])),
+    [jobs],
   );
 
   const filtered = candidates.filter((c) => {
@@ -458,9 +643,11 @@ export default function CandidatesPage() {
     const matchVendor =
       !vendorFilter ||
       c.vendorId === vendorFilter ||
-      // Fall back to assignedRecruiter which may hold vendorId for older records
       c.assignedRecruiter === vendorFilter;
-    return matchText && matchVendor;
+    const matchJob =
+      !jobFilter ||
+      c.jobId === jobFilter;
+    return matchText && matchVendor && matchJob;
   });
 
   const byStage: Record<string, Candidate[]> = {};
@@ -585,6 +772,26 @@ export default function CandidatesPage() {
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={jobFilter || "__all__"}
+          onValueChange={(v) => setJobFilter(v === "__all__" ? "" : v)}
+        >
+          <SelectTrigger
+            className="h-7 text-xs w-44"
+            data-ocid="candidates-job-filter"
+          >
+            <SelectValue placeholder="All Jobs" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Jobs</SelectItem>
+            {jobs.map((j) => (
+              <SelectItem key={j.id} value={j.id}>
+                {j.title}
+                {j.budget ? ` · ${j.budget} LPA` : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <Tabs
@@ -624,6 +831,7 @@ export default function CandidatesPage() {
                   stage={stage}
                   candidates={byStage[stage] ?? []}
                   vendorMap={vendorMap}
+                  jobMap={jobMap}
                   onDragStart={handleDragStart}
                   onDrop={handleDrop}
                   isDragOver={dragOver === stage}
@@ -659,6 +867,9 @@ export default function CandidatesPage() {
                   </TableHead>
                   <TableHead className="text-[11px] h-8">Stage</TableHead>
                   <TableHead className="text-[11px] h-8 hidden lg:table-cell">
+                    Job
+                  </TableHead>
+                  <TableHead className="text-[11px] h-8 hidden lg:table-cell">
                     Vendor
                   </TableHead>
                   <TableHead className="text-[11px] h-8 text-center">
@@ -687,6 +898,7 @@ export default function CandidatesPage() {
                   const vendorName = vendorMap.get(
                     c.assignedRecruiter ?? "",
                   )?.name;
+                  const job = jobMap.get(c.jobId ?? "");
                   return (
                     <TableRow
                       key={c.id}
@@ -728,6 +940,16 @@ export default function CandidatesPage() {
                             {c.currentStage}
                           </Badge>
                         </div>
+                      </TableCell>
+                      <TableCell className="py-2 hidden lg:table-cell">
+                        <span className="text-[11px] text-muted-foreground">
+                          {job?.title ?? "—"}
+                          {job?.budget && (
+                            <span className="text-[10px] text-blue-600 ml-1">
+                              ({job.budget} LPA)
+                            </span>
+                          )}
+                        </span>
                       </TableCell>
                       <TableCell className="py-2 hidden lg:table-cell">
                         <span className="text-[11px] text-muted-foreground">
