@@ -77,19 +77,15 @@ export interface JobFormInput {
   rateCurrency?: string;
 }
 
+// In types/forms.ts
 export interface SubmissionFormInput {
   candidateId: string;
   jobId: string;
-  vendorId?: string;
-  /** Resume this submission is based on — submissions table is source of truth */
   resumeId?: string;
-  /** Initial pipeline stage — defaults to 'resume_sent' */
-  pipelineStage?: SubmissionPipelineStage;
-  notes?: string;
-  submittedBy?: string;
-  rateProposed?: number;
+  vendorId?: string;
+  rateProposed?: number; // LPM or LPA amount (not hourly)
+  pipelineStage?: string;
 }
-
 export interface SubmissionUpdateInput {
   stage: SubmissionPipelineStage;
   rejectionReason?: string;
