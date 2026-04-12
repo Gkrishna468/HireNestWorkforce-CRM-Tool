@@ -93,6 +93,40 @@ function handleMutationError(err: unknown) {
   toast.error(msg);
 }
 
+/** Transform CandidateFormInput to database schema (snake_case) */
+function transformCandidateInput(input: CandidateFormInput): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    name: input.name,
+    email: input.email,
+    current_stage: input.currentStage || "Applied",
+    health_score: input.healthScore ?? 50,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  // Optional fields - only add if they have values
+  if (input.phone) payload.phone = input.phone;
+  if (input.title) payload.title = input.title;
+  if (input.skills) payload.skills = input.skills;
+  if (input.notes) payload.notes = input.notes;
+  if (input.linkedinUrl) payload.linkedin_url = input.linkedinUrl;
+  if (input.salaryMin !== undefined) payload.salary_min = input.salaryMin;
+  if (input.salaryMax !== undefined) payload.salary_max = input.salaryMax;
+  
+  // IMPORTANT: Map vendorId to assigned_recruiter (NOT vendor_id)
+  // The database uses assigned_recruiter, not vendor_id
+  if (input.assignedRecruiter) {
+    payload.assigned_recruiter = input.assignedRecruiter;
+  }
+  
+  // Handle job selection
+  if (input.jobId) {
+    payload.job_id = input.jobId;
+  }
+
+  return payload;
+}
+
 // ── Vendors ───────────────────────────────────────────────────────────────────
 
 export function useVendors() {
@@ -277,7 +311,10 @@ export function useCreateCandidate() {
   return useMutation({
     mutationFn: (input: CandidateFormInput) => {
       checkSupabaseOrThrow();
-      return api.createCandidate(null, input);
+      // Transform the input to match database schema (snake_case)
+      const transformedInput = transformCandidateInput(input);
+      console.log("Creating candidate with payload:", transformedInput);
+      return api.createCandidate(null, transformedInput as CandidateFormInput);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.candidates }),
     onError: handleMutationError,
@@ -292,7 +329,24 @@ export function useUpdateCandidate() {
       input,
     }: { id: string; input: Partial<CandidateFormInput> }) => {
       checkSupabaseOrThrow();
-      return api.updateCandidate(null, id, input);
+      // Transform the input for updates too
+      const transformedInput: Partial<CandidateFormInput> = {};
+      
+      if (input.name) transformedInput.name = input.name;
+      if (input.email) transformedInput.email = input.email;
+      if (input.phone) transformedInput.phone = input.phone;
+      if (input.title) transformedInput.title = input.title;
+      if (input.skills) transformedInput.skills = input.skills;
+      if (input.notes) transformedInput.notes = input.notes;
+      if (input.currentStage) transformedInput.currentStage = input.currentStage;
+      if (input.healthScore !== undefined) transformedInput.healthScore = input.healthScore;
+      if (input.assignedRecruiter) transformedInput.assignedRecruiter = input.assignedRecruiter;
+      if (input.jobId) transformedInput.jobId = input.jobId;
+      if (input.salaryMin !== undefined) transformedInput.salaryMin = input.salaryMin;
+      if (input.salaryMax !== undefined) transformedInput.salaryMax = input.salaryMax;
+      if (input.linkedinUrl) transformedInput.linkedinUrl = input.linkedinUrl;
+      
+      return api.updateCandidate(null, id, transformedInput);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.candidates });
