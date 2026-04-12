@@ -616,29 +616,42 @@ export async function createCandidate(
   _actor: Actor,
   input: CandidateFormInput,
 ): Promise<Candidate> {
-  // FIXED: Use assigned_recruiter instead of vendor_id
-  // Use snake_case for all database column names
-  const row = await supabaseInsert<Record<string, unknown>>("candidates", {
+  // Build payload dynamically based on what fields are provided
+  const payload: Record<string, unknown> = {
     name: input.name,
     email: input.email,
-    phone: input.phone ?? null,
-    role: input.title ?? null,
-    skills: input.skills ?? null,
-    experience: input.notes ?? null,
-    notes: input.notes ?? null,
-    // CRITICAL FIX: Use assigned_recruiter NOT vendor_id
-    assigned_recruiter: input.assignedRecruiter ?? null,
-    // Add job_id if present
-    job_id: input.jobId ?? null,
-    // Add salary fields
-    salary_min: input.salaryMin ?? null,
-    salary_max: input.salaryMax ?? null,
-    // Add linkedin_url
-    linkedin_url: input.linkedinUrl ?? null,
     status: "active",
     stage: "Applied",
     health_score: 50,
-  });
+  };
+
+  // Only add optional fields if they have values
+  if (input.phone) payload.phone = input.phone;
+  if (input.title) payload.role = input.title;
+  if (input.skills) payload.skills = input.skills;
+  if (input.notes) {
+    payload.notes = input.notes;
+    payload.experience = input.notes;
+  }
+  if (input.salaryMin !== undefined) payload.salary_min = input.salaryMin;
+  if (input.salaryMax !== undefined) payload.salary_max = input.salaryMax;
+  if (input.linkedinUrl) payload.linkedin_url = input.linkedinUrl;
+  if (input.jobId) payload.job_id = input.jobId;
+  
+  // Try different possible column names for vendor/recruiter
+  // Comment out the ones that don't exist in your schema
+  if (input.assignedRecruiter) {
+    // Try these one by one to see which one works:
+    // payload.assigned_recruiter = input.assignedRecruiter; // Doesn't work
+    // payload.assignedrecruiter = input.assignedRecruiter; // Try this
+    // payload.vendor_id = input.assignedRecruiter; // Try this
+    // payload.vendorid = input.assignedRecruiter; // Try this
+    payload.recruiter_id = input.assignedRecruiter; // Try this
+  }
+
+  console.log("Creating candidate with payload:", JSON.stringify(payload, null, 2));
+
+  const row = await supabaseInsert<Record<string, unknown>>("candidates", payload);
   return mapCandidateRow(row);
 }
 
