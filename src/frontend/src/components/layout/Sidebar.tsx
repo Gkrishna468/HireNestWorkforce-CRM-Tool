@@ -4,6 +4,7 @@ import {
   useBenchRecords,
   usePendingApprovals,
   usePendingFollowUps,
+  useResumes,
 } from "@/hooks/use-crm";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import {
   ChevronRight,
   ClipboardList,
   Database,
+  FileText,
   LayoutDashboard,
   Settings,
   UserCheck,
@@ -47,6 +49,8 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const approvalCount = pendingApprovals?.length ?? 0;
   const { data: benchRecords } = useBenchRecords();
   const benchCount = benchRecords?.length ?? 0;
+  const { data: resumes = [] } = useResumes();
+  const resumeCount = resumes.length || undefined;
 
   const navItems: NavItem[] = [
     { label: "Pulse Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -56,6 +60,12 @@ export function Sidebar({ open, onClose }: SidebarProps) {
     { label: "Candidates", href: "/candidates", icon: UserCheck },
     { label: "Jobs", href: "/jobs", icon: ClipboardList },
     { label: "Bench", href: "/bench", icon: Archive, badge: benchCount },
+    {
+      label: "Resumes",
+      href: "/resumes",
+      icon: FileText,
+      badge: resumeCount,
+    },
     {
       label: "Follow-Ups",
       href: "/follow-ups",

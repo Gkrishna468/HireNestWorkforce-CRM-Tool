@@ -153,7 +153,18 @@ export interface Submission {
   status: SubmissionStatus;
   submittedAt: number;
   approvedBy?: string;
+  pipelineStage?: string;
 }
+
+export const PIPELINE_STAGES = [
+  "Resume Sent",
+  "Screening Round",
+  "Selected",
+  "Client Round",
+  "Final Onboarding",
+] as const;
+
+export type PipelineStageValue = (typeof PIPELINE_STAGES)[number];
 
 export interface PipelineStage {
   id: string;
@@ -271,4 +282,25 @@ export interface BenchRecordInput {
 
 export interface BenchMatch extends BenchRecord {
   matchScore: number;
+}
+
+// ── Resumes ────────────────────────────────────────────────────────────────────
+
+export interface Resume {
+  id: string;
+  fileName: string;
+  fileUrl?: string;
+  candidateName: string;
+  extractedSkills: string;
+  extractedExperience: string;
+  extractedRole: string;
+  rawText: string;
+  createdAt: string;
+}
+
+export interface ResumeMatch {
+  job: Job;
+  matchScore: number;
+  matchedKeywords: string[];
+  benchMatchName?: string;
 }

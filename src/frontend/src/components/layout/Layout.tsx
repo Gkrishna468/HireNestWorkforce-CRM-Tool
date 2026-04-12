@@ -28,6 +28,14 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
     subtitle: "Candidate pipeline and placement tracking",
   },
   "/jobs": { title: "Jobs", subtitle: "Open positions and requirements" },
+  "/bench": {
+    title: "Bench",
+    subtitle: "Vendor bench candidates available for placement",
+  },
+  "/resumes": {
+    title: "Resumes",
+    subtitle: "Upload and match resumes to open job requirements",
+  },
   "/follow-ups": {
     title: "Follow-Ups",
     subtitle: "AI-suggested actions pending your approval",

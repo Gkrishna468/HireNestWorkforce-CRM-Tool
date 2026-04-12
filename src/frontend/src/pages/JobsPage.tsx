@@ -21,10 +21,13 @@ import {
   useCreateJob,
   useJobs,
   useMatchBench,
+  useSubmissionsForJob,
   useUpdateJob,
   useUpdateJobStatus,
+  useUpdateSubmission,
 } from "@/hooks/use-crm";
 import type { BenchMatch, Client, Job, JobStatus } from "@/types/crm";
+import { PIPELINE_STAGES } from "@/types/crm";
 import type { JobFormInput } from "@/types/forms";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -975,6 +978,137 @@ function ShareJobModal({
   );
 }
 
+// ── Pipeline Stage Colors ─────────────────────────────────────────────────────
+
+const STAGE_COLOR_MAP: Record<string, string> = {
+  "Resume Sent":
+    "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
+  "Screening Round":
+    "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
+  Selected:
+    "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
+  "Client Round":
+    "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
+  "Final Onboarding":
+    "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
+};
+
+// ── Candidate Pipeline Panel ──────────────────────────────────────────────────
+
+function CandidatePipelinePanel({ job }: { job: Job }) {
+  const { data: submissions = [], isLoading } = useSubmissionsForJob(job.id);
+  const updateSubmission = useUpdateSubmission();
+
+  function handleStageChange(submissionId: string, newStage: string) {
+    updateSubmission.mutate(
+      { id: submissionId, patch: { pipeline_stage: newStage } },
+      {
+        onSuccess: () => toast.success(`Stage updated to "${newStage}"`),
+        onError: () => toast.error("Failed to update stage"),
+      },
+    );
+  }
+
+  const currentStage = (sub: { pipelineStage?: string }) =>
+    sub.pipelineStage ?? "";
+
+  return (
+    <div
+      className="border-t border-border mt-4 pt-4"
+      data-ocid="candidate-pipeline-panel"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <Users className="h-3.5 w-3.5 text-primary" />
+        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
+          Candidate Pipeline
+        </h4>
+        {!isLoading && (
+          <Badge variant="outline" className="h-4 text-[10px] px-1.5">
+            {submissions.length}{" "}
+            {submissions.length === 1 ? "profile" : "profiles"} shared
+          </Badge>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-1.5">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-9 w-full rounded" />
+          ))}
+        </div>
+      ) : submissions.length === 0 ? (
+        <div
+          className="rounded-md border border-border bg-muted/20 px-3 py-4 text-center"
+          data-ocid="pipeline-empty"
+        >
+          <p className="text-xs text-muted-foreground">
+            0 profiles shared for this role
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-border overflow-hidden">
+          <div className="grid grid-cols-[1fr_160px_80px] gap-2 px-3 py-1.5 bg-muted/30 border-b border-border">
+            {["Candidate", "Pipeline Stage", "Date"].map((h) => (
+              <span
+                key={h}
+                className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider"
+              >
+                {h}
+              </span>
+            ))}
+          </div>
+          {submissions.map((sub) => {
+            const stageValue = currentStage(sub);
+            const stageColorClass =
+              STAGE_COLOR_MAP[stageValue] ??
+              "bg-muted text-muted-foreground border-border";
+            return (
+              <div
+                key={sub.id}
+                className="grid grid-cols-[1fr_160px_80px] gap-2 px-3 py-2 border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors duration-150 items-center"
+                data-ocid="pipeline-row"
+              >
+                <span className="text-xs font-medium text-foreground truncate">
+                  {sub.candidateName || "—"}
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={stageValue}
+                    onChange={(e) => handleStageChange(sub.id, e.target.value)}
+                    className="w-full h-6 text-[10px] bg-background border border-input rounded px-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    data-ocid="pipeline-stage-select"
+                    aria-label={`Pipeline stage for ${sub.candidateName}`}
+                  >
+                    <option value="">Select stage…</option>
+                    {PIPELINE_STAGES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  {stageValue && (
+                    <span
+                      className={`hidden sm:inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] font-medium shrink-0 ${stageColorClass}`}
+                    >
+                      ✓
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-muted-foreground">
+                  {new Date(sub.submittedAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Bench Matches Panel ───────────────────────────────────────────────────────
 
 function BenchMatchesPanel({ job }: { job: Job }) {
@@ -1296,6 +1430,9 @@ function JobDetailPanel({
               <p className="text-xs text-card-foreground">{job.experience}</p>
             </div>
           )}
+
+          {/* Candidate Pipeline */}
+          <CandidatePipelinePanel job={job} />
 
           {/* Bench Matches */}
           <BenchMatchesPanel job={job} />

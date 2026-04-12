@@ -3,12 +3,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createActor } from "../backend";
 import * as api from "../lib/api";
+import { scoreJobMatch } from "../lib/resumeParser";
 import { SupabaseNotConfiguredError, getSupabaseCreds } from "../lib/supabase";
 import type {
   ApprovalStatus,
   BenchRecord,
   BenchRecordInput,
   FollowUpStatus,
+  Resume,
+  ResumeMatch,
   SubmissionStatus,
 } from "../types/crm";
 import type {
@@ -45,6 +48,8 @@ export const QK = {
   jobsForClient: (clientId: string) => ["jobs", "client", clientId] as const,
   submissions: ["submissions"] as const,
   submissionsForJob: (jobId: string) => ["submissions", "job", jobId] as const,
+  submissionsForVendor: (vendorId: string) =>
+    ["submissions", "vendor", vendorId] as const,
   submissionsForCandidate: (candidateId: string) =>
     ["submissions", "candidate", candidateId] as const,
   recruiterMetrics: (recruiterId: string) =>
@@ -52,6 +57,7 @@ export const QK = {
   pipelineStages: ["pipeline-stages"] as const,
   bench: ["bench"] as const,
   benchMatch: (jobId: string) => ["bench-match", jobId] as const,
+  resumes: ["resumes"] as const,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -507,6 +513,15 @@ export function useSubmissionsForJob(jobId: string) {
   });
 }
 
+export function useSubmissionsForVendor(vendorId: string) {
+  return useQuery({
+    queryKey: QK.submissionsForVendor(vendorId),
+    queryFn: () => api.getSubmissionsForVendor(null, vendorId),
+    enabled: !!vendorId && !!getSupabaseCreds(),
+    retry: false,
+  });
+}
+
 export function useSubmissionsForCandidate(candidateId: string) {
   return useQuery({
     queryKey: QK.submissionsForCandidate(candidateId),
@@ -531,11 +546,22 @@ export function useCreateSubmission() {
 export function useUpdateSubmission() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, status }: { id: string; status: SubmissionStatus }) => {
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch:
+        | SubmissionStatus
+        | { status?: SubmissionStatus; pipeline_stage?: string };
+    }) => {
       checkSupabaseOrThrow();
-      return api.updateSubmission(null, id, status);
+      return api.updateSubmission(null, id, patch);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: QK.submissions }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.submissions });
+      qc.invalidateQueries({ queryKey: ["submissions"] });
+    },
     onError: handleMutationError,
   });
 }
@@ -770,3 +796,73 @@ export function useDeleteBenchRecord() {
 
 // ── Re-exports for type usage ─────────────────────────────────────────────────
 export type { BenchRecord, BenchRecordInput };
+
+// ── Resumes ────────────────────────────────────────────────────────────────────
+
+export function useResumes() {
+  return useQuery<Resume[]>({
+    queryKey: QK.resumes,
+    queryFn: () => api.getResumes(),
+    enabled: !!getSupabaseCreds(),
+    retry: false,
+  });
+}
+
+export function useCreateResume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      fileName: string;
+      fileUrl?: string;
+      candidateName: string;
+      extractedSkills: string;
+      extractedExperience: string;
+      extractedRole: string;
+      rawText: string;
+    }) => {
+      checkSupabaseOrThrow();
+      return api.createResume(input);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK.resumes }),
+    onError: handleMutationError,
+  });
+}
+
+export function useDeleteResume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => {
+      checkSupabaseOrThrow();
+      return api.deleteResume(id);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK.resumes }),
+    onError: handleMutationError,
+  });
+}
+
+export function useResumeJobMatches(resume: Resume | null) {
+  return useQuery<ResumeMatch[]>({
+    queryKey: ["resume-matches", resume?.id ?? ""],
+    queryFn: async () => {
+      if (!resume) return [];
+      const jobs = await api.getJobsForMatching();
+      const matches: ResumeMatch[] = jobs
+        .map((job) => {
+          const { score, matchedKeywords } = scoreJobMatch(
+            resume.extractedSkills,
+            resume.extractedRole,
+            resume.extractedExperience,
+            job,
+          );
+          return { job, matchScore: score, matchedKeywords };
+        })
+        .sort((a, b) => b.matchScore - a.matchScore)
+        .slice(0, 10);
+      return matches;
+    },
+    enabled: !!resume && !!getSupabaseCreds(),
+    retry: false,
+  });
+}
+
+export type { Resume, ResumeMatch };

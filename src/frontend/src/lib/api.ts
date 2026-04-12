@@ -20,6 +20,7 @@ import type {
   PulseDashboard,
   Recruiter,
   RecruiterMetrics,
+  Resume,
   Submission,
   SubmissionStatus,
   Vendor,
@@ -260,6 +261,7 @@ function mapSubmissionRow(r: any): Submission {
     status: (r.status ?? "pending") as SubmissionStatus,
     submittedAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
     approvedBy: r.approved_by ?? r.approvedBy ?? undefined,
+    pipelineStage: r.pipeline_stage ?? r.pipelineStage ?? undefined,
   };
 }
 
@@ -724,6 +726,14 @@ export async function getSubmissionsForJob(
   return rows.map(mapSubmissionRow);
 }
 
+export async function getSubmissionsForVendor(
+  _actor: Actor,
+  vendorId: string,
+): Promise<Submission[]> {
+  const rows = await supabaseSelect("submissions", { vendor_id: vendorId });
+  return rows.map(mapSubmissionRow);
+}
+
 export async function createSubmission(
   _actor: Actor,
   input: SubmissionFormInput,
@@ -739,11 +749,17 @@ export async function createSubmission(
 export async function updateSubmission(
   _actor: Actor,
   id: string,
-  status: SubmissionStatus,
+  patch:
+    | SubmissionStatus
+    | { status?: SubmissionStatus; pipeline_stage?: string },
 ): Promise<Submission> {
-  const row = await supabaseUpdate<Record<string, unknown>>("submissions", id, {
-    status,
-  });
+  const data: Record<string, unknown> =
+    typeof patch === "string" ? { status: patch } : { ...patch };
+  const row = await supabaseUpdate<Record<string, unknown>>(
+    "submissions",
+    id,
+    data,
+  );
   return mapSubmissionRow(row);
 }
 
@@ -1034,4 +1050,62 @@ export async function deleteBenchRecord(
   await supabaseDelete("bench_records", uuid);
   _benchUUIDMap.delete(id);
   return true;
+}
+
+// ── Resumes ───────────────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapResumeRow(row: any): Resume {
+  return {
+    id: String(row.id),
+    fileName: safeString(row.file_name),
+    fileUrl: row.file_url ? String(row.file_url) : undefined,
+    candidateName: safeString(row.candidate_name),
+    extractedSkills: safeString(row.extracted_skills),
+    extractedExperience: safeString(row.extracted_experience),
+    extractedRole: safeString(row.extracted_role),
+    rawText: safeString(row.raw_text),
+    createdAt: safeString(row.created_at),
+  };
+}
+
+export async function getResumes(): Promise<Resume[]> {
+  const rows = await supabaseSelect("resumes", undefined, {
+    order: "created_at.desc",
+  });
+  return rows.map(mapResumeRow);
+}
+
+export async function createResume(input: {
+  fileName: string;
+  fileUrl?: string;
+  candidateName: string;
+  extractedSkills: string;
+  extractedExperience: string;
+  extractedRole: string;
+  rawText: string;
+}): Promise<Resume> {
+  const result = await supabaseInsert<Record<string, unknown>>("resumes", {
+    file_name: input.fileName,
+    file_url: input.fileUrl ?? null,
+    candidate_name: input.candidateName,
+    extracted_skills: input.extractedSkills,
+    extracted_experience: input.extractedExperience,
+    extracted_role: input.extractedRole,
+    raw_text: input.rawText,
+  });
+  return mapResumeRow(result);
+}
+
+export async function deleteResume(id: string): Promise<void> {
+  await supabaseDelete("resumes", id);
+}
+
+export async function getJobsForMatching(): Promise<Job[]> {
+  const rows = await supabaseSelect(
+    "jobs",
+    { status: "open" },
+    { order: "created_at.desc", limit: 200 },
+  );
+  return rows.map(mapJobRow);
 }

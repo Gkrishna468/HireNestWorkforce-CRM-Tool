@@ -7,6 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -15,10 +22,12 @@ import {
   useCreateApprovalItem,
   useCreateJob,
   useFollowUps,
+  useJobs,
   useJobsForClient,
   useUpdateClient,
   useUpdateEntityStage,
   useUpdateFollowUpStatus,
+  useUpdateJob,
 } from "@/hooks/use-crm";
 import { formatCurrency, formatRelativeTime } from "@/lib/utils/format";
 import {
@@ -37,6 +46,7 @@ import {
   CheckCircle,
   Clock,
   Edit2,
+  Link2,
   Mail,
   MessageSquare,
   Phone,
@@ -469,6 +479,7 @@ export default function ClientDetailPage() {
 
   const { data: clients, isLoading: clientsLoading } = useClients();
   const { data: jobs, isLoading: jobsLoading } = useJobsForClient(clientId);
+  const { data: allJobs = [] } = useJobs();
   const { data: activities, isLoading: activitiesLoading } =
     useActivities(clientId);
   const { data: allFollowUps } = useFollowUps();
@@ -477,15 +488,25 @@ export default function ClientDetailPage() {
   const updateStage = useUpdateEntityStage();
   const createApproval = useCreateApprovalItem();
   const createJob = useCreateJob();
-  const updateJob = useCreateJob(); // reuse create shape for edits
+  const updateJobMutation = useUpdateJob();
 
   const [editOpen, setEditOpen] = useState(false);
   const [jobModalOpen, setJobModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [linkJobId, setLinkJobId] = useState<string>("");
+  const [isLinking, setIsLinking] = useState(false);
 
   const client = (clients ?? []).find((c) => c.id === clientId);
   const followUps = (allFollowUps ?? []).filter((f) => f.entityId === clientId);
   const pendingFollowUps = followUps.filter((f) => f.status === "pending");
+
+  // Jobs already linked to this client
+  const linkedJobIds = new Set((jobs ?? []).map((j) => j.id));
+
+  // Open jobs NOT already linked to this client — available to link
+  const linkableJobs = allJobs.filter(
+    (j) => j.status === "open" && !linkedJobIds.has(j.id),
+  );
 
   // Stage advancement
   const next = client ? nextStage("client", client.currentStage) : null;
@@ -536,15 +557,36 @@ export default function ClientDetailPage() {
   }
 
   function handleJobMarkFilled(job: Job) {
-    updateJob.mutate({ ...job, status: "filled" } as unknown as JobFormInput, {
-      onSuccess: () => toast.success("Job marked as filled"),
-    });
+    updateJobMutation.mutate(
+      { id: job.id, input: { status: "filled" } as Partial<JobFormInput> },
+      { onSuccess: () => toast.success("Job marked as filled") },
+    );
   }
 
   function handleJobMarkClosed(job: Job) {
-    updateJob.mutate({ ...job, status: "closed" } as unknown as JobFormInput, {
-      onSuccess: () => toast.success("Job closed"),
-    });
+    updateJobMutation.mutate(
+      { id: job.id, input: { status: "closed" } as Partial<JobFormInput> },
+      { onSuccess: () => toast.success("Job closed") },
+    );
+  }
+
+  async function handleLinkJob() {
+    if (!linkJobId) return;
+    setIsLinking(true);
+    updateJobMutation.mutate(
+      { id: linkJobId, input: { clientId } as Partial<JobFormInput> },
+      {
+        onSuccess: () => {
+          toast.success("Job linked to client");
+          setLinkJobId("");
+          setIsLinking(false);
+        },
+        onError: () => {
+          toast.error("Failed to link job");
+          setIsLinking(false);
+        },
+      },
+    );
   }
 
   if (clientsLoading) {
@@ -762,6 +804,43 @@ export default function ClientDetailPage() {
                   Add Job
                 </Button>
               </div>
+
+              {/* Link existing job */}
+              {linkableJobs.length > 0 && (
+                <div
+                  className="mb-3 flex items-center gap-2 p-2.5 rounded-md border border-border bg-muted/20"
+                  data-ocid="link-job-section"
+                >
+                  <Link2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                  <Select value={linkJobId} onValueChange={setLinkJobId}>
+                    <SelectTrigger
+                      className="h-7 text-xs flex-1 min-w-0"
+                      data-ocid="link-job-select"
+                    >
+                      <SelectValue placeholder="Link existing open job…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {linkableJobs.map((j) => (
+                        <SelectItem key={j.id} value={j.id} className="text-xs">
+                          {j.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    className="h-7 px-2.5 text-xs shrink-0"
+                    disabled={
+                      !linkJobId || isLinking || updateJobMutation.isPending
+                    }
+                    onClick={handleLinkJob}
+                    data-ocid="link-job-btn"
+                  >
+                    {isLinking ? "Linking…" : "Link Job"}
+                  </Button>
+                </div>
+              )}
+
               {jobsLoading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-16 w-full" />
@@ -771,7 +850,7 @@ export default function ClientDetailPage() {
                 <EmptyState
                   icon={Briefcase}
                   title="No job orders yet"
-                  message="Add the first job order for this client."
+                  message="Add a new job order or link an existing one to this client."
                   action={{
                     label: "Add Job Order",
                     onClick: () => setJobModalOpen(true),
@@ -913,14 +992,17 @@ export default function ClientDetailPage() {
             clientId={clientId}
             initial={editingJob}
             onSubmit={(input) => {
-              updateJob.mutate(input, {
-                onSuccess: () => {
-                  setEditingJob(null);
-                  toast.success("Job updated");
+              updateJobMutation.mutate(
+                { id: editingJob.id, input },
+                {
+                  onSuccess: () => {
+                    setEditingJob(null);
+                    toast.success("Job updated");
+                  },
                 },
-              });
+              );
             }}
-            loading={updateJob.isPending}
+            loading={updateJobMutation.isPending}
             submitLabel="Save Changes"
           />
         )}

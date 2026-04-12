@@ -21,6 +21,7 @@ const CandidatesPage = lazy(() => import("@/pages/CandidatesPage"));
 const CandidateDetailPage = lazy(() => import("@/pages/CandidateDetailPage"));
 const JobsPage = lazy(() => import("@/pages/JobsPage"));
 const BenchPage = lazy(() => import("@/pages/BenchPage"));
+const ResumesPage = lazy(() => import("@/pages/ResumesPage"));
 const FollowUpsPage = lazy(() => import("@/pages/FollowUpsPage"));
 const ApprovalsPage = lazy(() => import("@/pages/ApprovalsPage"));
 const ReportsPage = lazy(() => import("@/pages/ReportsPage"));
@@ -164,6 +165,17 @@ const benchRoute = createRoute({
   ),
 });
 
+// Resumes
+const resumesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/resumes",
+  component: () => (
+    <PageWrapper>
+      <ResumesPage />
+    </PageWrapper>
+  ),
+});
+
 // Follow-ups
 const followUpsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -232,6 +244,7 @@ const routeTree = rootRoute.addChildren([
   candidateDetailRoute,
   jobsRoute,
   benchRoute,
+  resumesRoute,
   followUpsRoute,
   approvalsRoute,
   reportsRoute,

@@ -14,6 +14,7 @@ import {
   useCreateApprovalItem,
   useFollowUps,
   useLogActivity,
+  useSubmissionsForVendor,
   useUpdateEntityStage,
   useUpdateFollowUpStatus,
   useUpdateVendor,
@@ -21,22 +22,21 @@ import {
 } from "@/hooks/use-crm";
 import { computeHealthStatus } from "@/lib/utils/health";
 import { VENDOR_STAGES, stageRequiresApproval } from "@/lib/utils/pipeline";
-import type { Vendor } from "@/types/crm";
+import type { Submission, Vendor } from "@/types/crm";
+import { PIPELINE_STAGES } from "@/types/crm";
 import type { ActivityFormInput, VendorFormInput } from "@/types/forms";
 import { Link, useParams } from "@tanstack/react-router";
 import {
   ArrowLeft,
   Building2,
-  Check,
   CheckCircle,
   Clock,
   Edit2,
   Mail,
   Phone,
   Plus,
-  Send,
   Timer,
-  X,
+  Users,
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
@@ -50,6 +50,112 @@ import {
   YAxis,
 } from "recharts";
 import { toast } from "sonner";
+
+// ── Stage Colors ──────────────────────────────────────────────────────────────
+
+const STAGE_COLOR_MAP: Record<string, string> = {
+  "Resume Sent":
+    "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
+  "Screening Round":
+    "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
+  Selected:
+    "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
+  "Client Round":
+    "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
+  "Final Onboarding":
+    "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
+};
+
+function StageBadge({ stage }: { stage?: string }) {
+  if (!stage)
+    return <span className="text-[10px] text-muted-foreground">—</span>;
+  const cls =
+    STAGE_COLOR_MAP[stage] ?? "bg-muted text-muted-foreground border-border";
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium ${cls}`}
+    >
+      {stage}
+    </span>
+  );
+}
+
+// ── Shared Profiles Section ───────────────────────────────────────────────────
+
+function SharedProfilesSection({ vendorId }: { vendorId: string }) {
+  const { data: submissions = [], isLoading } =
+    useSubmissionsForVendor(vendorId);
+
+  return (
+    <div
+      className="p-4 border-b border-border"
+      data-ocid="shared-profiles-section"
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <Users className="h-3.5 w-3.5 text-muted-foreground" />
+        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
+          Shared Profiles
+        </p>
+        {submissions.length > 0 && (
+          <Badge variant="secondary" className="text-[9px] px-1.5 h-4">
+            {submissions.length}
+          </Badge>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-1.5">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-8 w-full rounded" />
+          ))}
+        </div>
+      ) : submissions.length === 0 ? (
+        <div
+          className="rounded-md border border-border bg-muted/20 px-3 py-4 text-center"
+          data-ocid="shared-profiles-empty"
+        >
+          <p className="text-xs text-muted-foreground">
+            No profiles shared yet
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-border overflow-hidden">
+          <div className="grid grid-cols-[1fr_1fr_1fr_80px] gap-2 px-3 py-1.5 bg-muted/30 border-b border-border">
+            {["Candidate", "Job", "Stage", "Date"].map((h) => (
+              <span
+                key={h}
+                className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider"
+              >
+                {h}
+              </span>
+            ))}
+          </div>
+          {submissions.map((sub: Submission) => (
+            <div
+              key={sub.id}
+              className="grid grid-cols-[1fr_1fr_1fr_80px] gap-2 px-3 py-2 border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors duration-150 text-xs items-center"
+              data-ocid="shared-profile-row"
+            >
+              <span className="font-medium text-foreground truncate">
+                {sub.candidateName || "—"}
+              </span>
+              <span className="text-muted-foreground truncate">
+                {sub.jobTitle || "—"}
+              </span>
+              <StageBadge stage={sub.pipelineStage} />
+              <span className="text-muted-foreground text-[10px]">
+                {new Date(sub.submittedAt).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Metric Card ───────────────────────────────────────────────────────────────
 
@@ -752,6 +858,9 @@ export default function VendorDetailPage() {
                 </div>
               </div>
             )}
+
+            {/* Shared Profiles */}
+            <SharedProfilesSection vendorId={vendorId} />
           </div>
 
           {/* Right column — Activity Timeline */}
