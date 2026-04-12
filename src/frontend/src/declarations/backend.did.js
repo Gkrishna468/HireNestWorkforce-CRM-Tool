@@ -107,16 +107,65 @@ export const Recruiter = IDL.Record({
   'lastActivityAt' : Timestamp,
   'submissionsToday' : IDL.Nat,
 });
+export const ResumeInput = IDL.Record({
+  'rawText' : IDL.Text,
+  'sourceVendorId' : IDL.Opt(EntityId),
+  'yearsExperience' : IDL.Opt(IDL.Int),
+  'fileName' : IDL.Text,
+  'extractedRole' : IDL.Text,
+  'email' : IDL.Opt(IDL.Text),
+  'extractedSkills' : IDL.Vec(IDL.Text),
+  'extractedExperience' : IDL.Text,
+  'candidateName' : IDL.Text,
+  'phone' : IDL.Opt(IDL.Text),
+  'location' : IDL.Opt(IDL.Text),
+  'fileUrl' : IDL.Text,
+});
+export const Resume = IDL.Record({
+  'id' : EntityId,
+  'rawText' : IDL.Text,
+  'sourceVendorId' : IDL.Opt(EntityId),
+  'yearsExperience' : IDL.Opt(IDL.Int),
+  'createdAt' : Timestamp,
+  'fileName' : IDL.Text,
+  'extractedRole' : IDL.Text,
+  'email' : IDL.Opt(IDL.Text),
+  'extractedSkills' : IDL.Vec(IDL.Text),
+  'extractedExperience' : IDL.Text,
+  'candidateName' : IDL.Text,
+  'phone' : IDL.Opt(IDL.Text),
+  'location' : IDL.Opt(IDL.Text),
+  'fileUrl' : IDL.Text,
+});
+export const SubmissionInput = IDL.Record({
+  'rateProposed' : IDL.Float64,
+  'jobId' : EntityId,
+  'submittedBy' : IDL.Text,
+  'resumeId' : IDL.Opt(EntityId),
+  'vendorId' : IDL.Opt(EntityId),
+  'notes' : IDL.Opt(IDL.Text),
+  'candidateId' : EntityId,
+});
+export const PipelineHistoryEntry = IDL.Record({
+  'changedAt' : IDL.Int,
+  'changedBy' : IDL.Text,
+  'fromStage' : IDL.Text,
+  'toStage' : IDL.Text,
+});
+export const SubmissionPipelineStage = IDL.Text;
 export const Submission = IDL.Record({
   'id' : EntityId,
   'rateProposed' : IDL.Float64,
-  'status' : IDL.Text,
+  'pipelineHistory' : IDL.Vec(PipelineHistoryEntry),
   'approvedAt' : IDL.Opt(Timestamp),
   'approvedBy' : IDL.Opt(IDL.Text),
   'jobId' : EntityId,
   'submittedAt' : Timestamp,
   'submittedBy' : IDL.Text,
+  'resumeId' : IDL.Opt(EntityId),
+  'pipelineStage' : SubmissionPipelineStage,
   'vendorId' : IDL.Opt(EntityId),
+  'notes' : IDL.Opt(IDL.Text),
   'candidateId' : EntityId,
 });
 export const Vendor = IDL.Record({
@@ -242,6 +291,15 @@ export const BenchMatch = IDL.Record({
   'candidateName' : IDL.Text,
   'vendorName' : IDL.Text,
 });
+export const ResumeJobMatch = IDL.Record({
+  'availScore' : IDL.Float64,
+  'jobId' : EntityId,
+  'matchScore' : IDL.Float64,
+  'skillsScore' : IDL.Float64,
+  'jobTitle' : IDL.Text,
+  'rateScore' : IDL.Float64,
+  'expScore' : IDL.Float64,
+});
 export const BenchRecordInput = IDL.Record({
   'rate' : IDL.Float64,
   'role' : IDL.Text,
@@ -297,11 +355,8 @@ export const idlService = IDL.Service({
       [],
     ),
   'createRecruiter' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [Recruiter], []),
-  'createSubmission' : IDL.Func(
-      [IDL.Text, IDL.Text, IDL.Opt(IDL.Text), IDL.Text, IDL.Float64],
-      [Submission],
-      [],
-    ),
+  'createResume' : IDL.Func([ResumeInput], [Resume], []),
+  'createSubmission' : IDL.Func([SubmissionInput], [Submission], []),
   'createVendor' : IDL.Func(
       [
         IDL.Text,
@@ -325,6 +380,8 @@ export const idlService = IDL.Service({
   'deleteCandidate' : IDL.Func([IDL.Text], [IDL.Bool], []),
   'deleteClient' : IDL.Func([IDL.Text], [IDL.Bool], []),
   'deleteRecruiter' : IDL.Func([IDL.Text], [IDL.Bool], []),
+  'deleteResume' : IDL.Func([IDL.Text], [IDL.Bool], []),
+  'deleteSubmission' : IDL.Func([IDL.Text], [IDL.Bool], []),
   'deleteVendor' : IDL.Func([IDL.Text], [IDL.Bool], []),
   'getActivitiesForEntity' : IDL.Func(
       [IDL.Text],
@@ -353,6 +410,8 @@ export const idlService = IDL.Service({
       [IDL.Vec(RecruiterMetrics)],
       ['query'],
     ),
+  'getResume' : IDL.Func([IDL.Text], [IDL.Opt(Resume)], ['query']),
+  'getSubmission' : IDL.Func([IDL.Text], [IDL.Opt(Submission)], ['query']),
   'getVendor' : IDL.Func([IDL.Text], [IDL.Opt(Vendor)], ['query']),
   'getVendorMetrics' : IDL.Func(
       [IDL.Text, IDL.Text],
@@ -373,6 +432,7 @@ export const idlService = IDL.Service({
   'listPendingApprovals' : IDL.Func([], [IDL.Vec(ApprovalItem)], ['query']),
   'listPendingFollowUps' : IDL.Func([], [IDL.Vec(FollowUp)], ['query']),
   'listRecruiters' : IDL.Func([], [IDL.Vec(Recruiter)], ['query']),
+  'listResumes' : IDL.Func([], [IDL.Vec(Resume)], ['query']),
   'listSubmissions' : IDL.Func([], [IDL.Vec(Submission)], ['query']),
   'listSubmissionsForCandidate' : IDL.Func(
       [IDL.Text],
@@ -380,6 +440,11 @@ export const idlService = IDL.Service({
       ['query'],
     ),
   'listSubmissionsForJob' : IDL.Func(
+      [IDL.Text],
+      [IDL.Vec(Submission)],
+      ['query'],
+    ),
+  'listSubmissionsForResume' : IDL.Func(
       [IDL.Text],
       [IDL.Vec(Submission)],
       ['query'],
@@ -420,6 +485,11 @@ export const idlService = IDL.Service({
       [],
     ),
   'matchBench' : IDL.Func([IDL.Text], [IDL.Vec(BenchMatch)], ['query']),
+  'matchResumeToJobs' : IDL.Func(
+      [IDL.Text],
+      [IDL.Vec(ResumeJobMatch)],
+      ['query'],
+    ),
   'rejectItem' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Bool], []),
   'runFollowUpEngine' : IDL.Func([], [IDL.Nat], []),
   'seedSampleData' : IDL.Func([], [IDL.Text], []),
@@ -439,7 +509,13 @@ export const idlService = IDL.Service({
     ),
   'updateJob' : IDL.Func([Job], [IDL.Bool], []),
   'updateRecruiter' : IDL.Func([Recruiter], [IDL.Bool], []),
+  'updateResume' : IDL.Func([IDL.Text, ResumeInput], [IDL.Bool], []),
   'updateSubmission' : IDL.Func([Submission], [IDL.Bool], []),
+  'updateSubmissionStage' : IDL.Func(
+      [IDL.Text, IDL.Text, IDL.Text],
+      [IDL.Bool],
+      [],
+    ),
   'updateVendor' : IDL.Func([Vendor], [IDL.Bool], []),
   'uploadBenchRecords' : IDL.Func(
       [IDL.Vec(BenchRecordInput)],
@@ -550,16 +626,65 @@ export const idlFactory = ({ IDL }) => {
     'lastActivityAt' : Timestamp,
     'submissionsToday' : IDL.Nat,
   });
+  const ResumeInput = IDL.Record({
+    'rawText' : IDL.Text,
+    'sourceVendorId' : IDL.Opt(EntityId),
+    'yearsExperience' : IDL.Opt(IDL.Int),
+    'fileName' : IDL.Text,
+    'extractedRole' : IDL.Text,
+    'email' : IDL.Opt(IDL.Text),
+    'extractedSkills' : IDL.Vec(IDL.Text),
+    'extractedExperience' : IDL.Text,
+    'candidateName' : IDL.Text,
+    'phone' : IDL.Opt(IDL.Text),
+    'location' : IDL.Opt(IDL.Text),
+    'fileUrl' : IDL.Text,
+  });
+  const Resume = IDL.Record({
+    'id' : EntityId,
+    'rawText' : IDL.Text,
+    'sourceVendorId' : IDL.Opt(EntityId),
+    'yearsExperience' : IDL.Opt(IDL.Int),
+    'createdAt' : Timestamp,
+    'fileName' : IDL.Text,
+    'extractedRole' : IDL.Text,
+    'email' : IDL.Opt(IDL.Text),
+    'extractedSkills' : IDL.Vec(IDL.Text),
+    'extractedExperience' : IDL.Text,
+    'candidateName' : IDL.Text,
+    'phone' : IDL.Opt(IDL.Text),
+    'location' : IDL.Opt(IDL.Text),
+    'fileUrl' : IDL.Text,
+  });
+  const SubmissionInput = IDL.Record({
+    'rateProposed' : IDL.Float64,
+    'jobId' : EntityId,
+    'submittedBy' : IDL.Text,
+    'resumeId' : IDL.Opt(EntityId),
+    'vendorId' : IDL.Opt(EntityId),
+    'notes' : IDL.Opt(IDL.Text),
+    'candidateId' : EntityId,
+  });
+  const PipelineHistoryEntry = IDL.Record({
+    'changedAt' : IDL.Int,
+    'changedBy' : IDL.Text,
+    'fromStage' : IDL.Text,
+    'toStage' : IDL.Text,
+  });
+  const SubmissionPipelineStage = IDL.Text;
   const Submission = IDL.Record({
     'id' : EntityId,
     'rateProposed' : IDL.Float64,
-    'status' : IDL.Text,
+    'pipelineHistory' : IDL.Vec(PipelineHistoryEntry),
     'approvedAt' : IDL.Opt(Timestamp),
     'approvedBy' : IDL.Opt(IDL.Text),
     'jobId' : EntityId,
     'submittedAt' : Timestamp,
     'submittedBy' : IDL.Text,
+    'resumeId' : IDL.Opt(EntityId),
+    'pipelineStage' : SubmissionPipelineStage,
     'vendorId' : IDL.Opt(EntityId),
+    'notes' : IDL.Opt(IDL.Text),
     'candidateId' : EntityId,
   });
   const Vendor = IDL.Record({
@@ -685,6 +810,15 @@ export const idlFactory = ({ IDL }) => {
     'candidateName' : IDL.Text,
     'vendorName' : IDL.Text,
   });
+  const ResumeJobMatch = IDL.Record({
+    'availScore' : IDL.Float64,
+    'jobId' : EntityId,
+    'matchScore' : IDL.Float64,
+    'skillsScore' : IDL.Float64,
+    'jobTitle' : IDL.Text,
+    'rateScore' : IDL.Float64,
+    'expScore' : IDL.Float64,
+  });
   const BenchRecordInput = IDL.Record({
     'rate' : IDL.Float64,
     'role' : IDL.Text,
@@ -752,11 +886,8 @@ export const idlFactory = ({ IDL }) => {
         [Recruiter],
         [],
       ),
-    'createSubmission' : IDL.Func(
-        [IDL.Text, IDL.Text, IDL.Opt(IDL.Text), IDL.Text, IDL.Float64],
-        [Submission],
-        [],
-      ),
+    'createResume' : IDL.Func([ResumeInput], [Resume], []),
+    'createSubmission' : IDL.Func([SubmissionInput], [Submission], []),
     'createVendor' : IDL.Func(
         [
           IDL.Text,
@@ -780,6 +911,8 @@ export const idlFactory = ({ IDL }) => {
     'deleteCandidate' : IDL.Func([IDL.Text], [IDL.Bool], []),
     'deleteClient' : IDL.Func([IDL.Text], [IDL.Bool], []),
     'deleteRecruiter' : IDL.Func([IDL.Text], [IDL.Bool], []),
+    'deleteResume' : IDL.Func([IDL.Text], [IDL.Bool], []),
+    'deleteSubmission' : IDL.Func([IDL.Text], [IDL.Bool], []),
     'deleteVendor' : IDL.Func([IDL.Text], [IDL.Bool], []),
     'getActivitiesForEntity' : IDL.Func(
         [IDL.Text],
@@ -808,6 +941,8 @@ export const idlFactory = ({ IDL }) => {
         [IDL.Vec(RecruiterMetrics)],
         ['query'],
       ),
+    'getResume' : IDL.Func([IDL.Text], [IDL.Opt(Resume)], ['query']),
+    'getSubmission' : IDL.Func([IDL.Text], [IDL.Opt(Submission)], ['query']),
     'getVendor' : IDL.Func([IDL.Text], [IDL.Opt(Vendor)], ['query']),
     'getVendorMetrics' : IDL.Func(
         [IDL.Text, IDL.Text],
@@ -828,6 +963,7 @@ export const idlFactory = ({ IDL }) => {
     'listPendingApprovals' : IDL.Func([], [IDL.Vec(ApprovalItem)], ['query']),
     'listPendingFollowUps' : IDL.Func([], [IDL.Vec(FollowUp)], ['query']),
     'listRecruiters' : IDL.Func([], [IDL.Vec(Recruiter)], ['query']),
+    'listResumes' : IDL.Func([], [IDL.Vec(Resume)], ['query']),
     'listSubmissions' : IDL.Func([], [IDL.Vec(Submission)], ['query']),
     'listSubmissionsForCandidate' : IDL.Func(
         [IDL.Text],
@@ -835,6 +971,11 @@ export const idlFactory = ({ IDL }) => {
         ['query'],
       ),
     'listSubmissionsForJob' : IDL.Func(
+        [IDL.Text],
+        [IDL.Vec(Submission)],
+        ['query'],
+      ),
+    'listSubmissionsForResume' : IDL.Func(
         [IDL.Text],
         [IDL.Vec(Submission)],
         ['query'],
@@ -883,6 +1024,11 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     'matchBench' : IDL.Func([IDL.Text], [IDL.Vec(BenchMatch)], ['query']),
+    'matchResumeToJobs' : IDL.Func(
+        [IDL.Text],
+        [IDL.Vec(ResumeJobMatch)],
+        ['query'],
+      ),
     'rejectItem' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [IDL.Bool], []),
     'runFollowUpEngine' : IDL.Func([], [IDL.Nat], []),
     'seedSampleData' : IDL.Func([], [IDL.Text], []),
@@ -902,7 +1048,13 @@ export const idlFactory = ({ IDL }) => {
       ),
     'updateJob' : IDL.Func([Job], [IDL.Bool], []),
     'updateRecruiter' : IDL.Func([Recruiter], [IDL.Bool], []),
+    'updateResume' : IDL.Func([IDL.Text, ResumeInput], [IDL.Bool], []),
     'updateSubmission' : IDL.Func([Submission], [IDL.Bool], []),
+    'updateSubmissionStage' : IDL.Func(
+        [IDL.Text, IDL.Text, IDL.Text],
+        [IDL.Bool],
+        [],
+      ),
     'updateVendor' : IDL.Func([Vendor], [IDL.Bool], []),
     'uploadBenchRecords' : IDL.Func(
         [IDL.Vec(BenchRecordInput)],

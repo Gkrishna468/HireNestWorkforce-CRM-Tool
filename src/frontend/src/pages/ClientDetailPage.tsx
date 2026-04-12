@@ -18,12 +18,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useActivities,
+  useClientJobLinks,
   useClients,
   useCreateApprovalItem,
+  useCreateClientJobLink,
   useCreateJob,
   useFollowUps,
   useJobs,
   useJobsForClient,
+  useSoftDeleteClientJobLink,
+  useSubmissionsForJob,
   useUpdateClient,
   useUpdateEntityStage,
   useUpdateFollowUpStatus,
@@ -32,10 +36,17 @@ import {
 import { formatCurrency, formatRelativeTime } from "@/lib/utils/format";
 import {
   CLIENT_STAGES,
+  PIPELINE_STAGE_LABELS,
   nextStage,
   stageRequiresApproval,
 } from "@/lib/utils/pipeline";
-import type { Client, FollowUp, Job } from "@/types/crm";
+import type {
+  Client,
+  ClientJobLink,
+  FollowUp,
+  Job,
+  Submission,
+} from "@/types/crm";
 import type { ClientFormInput, JobFormInput } from "@/types/forms";
 import { Link, useParams } from "@tanstack/react-router";
 import {
@@ -46,6 +57,7 @@ import {
   CheckCircle,
   Clock,
   Edit2,
+  ExternalLink,
   Link2,
   Mail,
   MessageSquare,
@@ -53,9 +65,11 @@ import {
   Plus,
   Send,
   TrendingDown,
+  Unlink,
+  Users,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 // ── Job Status Badge ───────────────────────────────────────────────────────────
@@ -89,76 +103,422 @@ function JobStatusBadge({ status }: { status: Job["status"] }) {
   );
 }
 
-// ── Job Order Card ─────────────────────────────────────────────────────────────
+// ── Rate Display Helper ────────────────────────────────────────────────────────
 
-interface JobCardProps {
+function formatJobRate(job: Job): string {
+  if (job.rateType && job.rateAmount) {
+    const symbol =
+      job.rateCurrency === "INR" ? "₹" : job.rateCurrency === "USD" ? "$" : "";
+    const label =
+      job.rateType === "LPM"
+        ? "LPM"
+        : job.rateType === "LPA"
+          ? "LPA"
+          : "Per Hour";
+    return `${symbol}${job.rateAmount} ${label}`;
+  }
+  if (job.rateMin && job.rateMax) {
+    return `${formatCurrency(job.rateMin)} – ${formatCurrency(job.rateMax)}`;
+  }
+  if (job.rateMin) return `From ${formatCurrency(job.rateMin)}`;
+  return "Rate TBD";
+}
+
+// ── Pipeline Preview ───────────────────────────────────────────────────────────
+
+function PipelinePreview({ jobId }: { jobId: string }) {
+  const { data: submissions = [] } = useSubmissionsForJob(jobId);
+
+  const stageCounts = submissions.reduce<Record<string, number>>((acc, sub) => {
+    const stage = sub.pipelineStage;
+    if (!stage) return acc;
+    acc[stage] = (acc[stage] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  const topStages = Object.entries(stageCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  if (topStages.length === 0) {
+    return (
+      <span className="text-[10px] text-muted-foreground">No submissions</span>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {topStages.map(([stage, count], i) => (
+        <span key={stage} className="flex items-center gap-0.5">
+          {i > 0 && (
+            <span className="text-muted-foreground/50 text-[9px]">→</span>
+          )}
+          <span className="text-[10px] text-muted-foreground">
+            {PIPELINE_STAGE_LABELS[
+              stage as keyof typeof PIPELINE_STAGE_LABELS
+            ] ?? stage}{" "}
+            <span className="font-semibold text-foreground">({count})</span>
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ── Placed Count ───────────────────────────────────────────────────────────────
+
+function PlacedCount({ jobId }: { jobId: string }) {
+  const { data: submissions = [] } = useSubmissionsForJob(jobId);
+  const placed = submissions.filter(
+    (s: Submission) => s.pipelineStage === "placed",
+  ).length;
+  return (
+    <span className="text-xs text-foreground">
+      {placed > 0 ? (
+        <span className="font-semibold text-[oklch(0.68_0.22_142)]">
+          {placed} placed
+        </span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )}
+    </span>
+  );
+}
+
+// ── Linked Job Row ─────────────────────────────────────────────────────────────
+
+interface LinkedJobRowProps {
   job: Job;
+  link: ClientJobLink;
+  clientId: string;
   onEdit: (job: Job) => void;
   onMarkFilled: (job: Job) => void;
   onMarkClosed: (job: Job) => void;
 }
 
-function JobCard({ job, onEdit, onMarkFilled, onMarkClosed }: JobCardProps) {
-  const rateDisplay =
-    job.rateMin && job.rateMax
-      ? `${formatCurrency(job.rateMin)} – ${formatCurrency(job.rateMax)}`
-      : job.rateMin
-        ? `From ${formatCurrency(job.rateMin)}`
-        : "Rate TBD";
+function LinkedJobRow({
+  job,
+  link,
+  clientId,
+  onEdit,
+  onMarkFilled,
+  onMarkClosed,
+}: LinkedJobRowProps) {
+  const softDelete = useSoftDeleteClientJobLink();
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
+
+  function handleUnlink() {
+    softDelete.mutate(
+      { clientId, jobId: job.id },
+      {
+        onSuccess: () => toast.success("Job unlinked"),
+        onError: () => toast.error("Failed to unlink job"),
+      },
+    );
+    setConfirmUnlink(false);
+  }
 
   return (
-    <div className="entity-card space-y-2" data-ocid="job-card">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold text-foreground truncate">
+    <div
+      className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-x-3 gap-y-1 px-3 py-2.5 border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors items-start"
+      data-ocid="linked-job-row"
+    >
+      {/* Title + Pipeline Preview stacked */}
+      <div className="min-w-0 space-y-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => onEdit(job)}
+            className="text-xs font-semibold text-foreground hover:text-primary transition-colors truncate max-w-[200px] text-left flex items-center gap-1"
+            data-ocid="linked-job-title"
+          >
             {job.title}
-          </p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
-            {rateDisplay}
-          </p>
+            <ExternalLink className="h-2.5 w-2.5 text-muted-foreground flex-shrink-0" />
+          </button>
+          <JobStatusBadge status={job.status} />
         </div>
-        <JobStatusBadge status={job.status} />
+        <PipelinePreview jobId={job.id} />
       </div>
-      {job.requirements && (
-        <p className="text-[10px] text-muted-foreground line-clamp-2 leading-snug">
-          {job.requirements}
-        </p>
+
+      {/* Rate */}
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-[10px] text-muted-foreground">Rate</span>
+        <span className="text-xs text-foreground whitespace-nowrap">
+          {formatJobRate(job)}
+        </span>
+      </div>
+
+      {/* Placed */}
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-[10px] text-muted-foreground">Placed</span>
+        <PlacedCount jobId={job.id} />
+      </div>
+
+      {/* Linked date */}
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-[10px] text-muted-foreground">Linked</span>
+        <span className="text-[10px] text-muted-foreground">
+          {new Date(link.linkedAt).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          })}
+        </span>
+      </div>
+
+      {/* Mark filled / closed */}
+      {job.status === "open" && (
+        <div className="flex flex-col gap-1 items-end">
+          <button
+            type="button"
+            onClick={() => onMarkFilled(job)}
+            className="text-[10px] text-[oklch(0.68_0.22_142)] hover:underline whitespace-nowrap"
+            data-ocid="linked-job-mark-filled"
+          >
+            Mark Filled
+          </button>
+          <button
+            type="button"
+            onClick={() => onMarkClosed(job)}
+            className="text-[10px] text-muted-foreground hover:underline whitespace-nowrap"
+          >
+            Close
+          </button>
+        </div>
       )}
-      <div className="flex items-center gap-1.5 pt-1 border-t border-border/50">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 px-2 text-[10px] gap-1"
-          onClick={() => onEdit(job)}
-          data-ocid="job-edit-btn"
-        >
-          <Edit2 className="h-2.5 w-2.5" />
-          Edit
-        </Button>
-        {job.status === "open" && (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[10px] gap-1 text-[oklch(0.68_0.22_142)]"
-              onClick={() => onMarkFilled(job)}
-              data-ocid="job-mark-filled-btn"
+      {job.status !== "open" && <div />}
+
+      {/* Unlink */}
+      <div className="flex items-center">
+        {confirmUnlink ? (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleUnlink}
+              className="text-[10px] text-[oklch(0.65_0.19_22)] hover:underline"
+              data-ocid="linked-job-confirm-unlink"
             >
-              <CheckCircle className="h-2.5 w-2.5" />
-              Mark Filled
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[10px] gap-1 text-muted-foreground"
-              onClick={() => onMarkClosed(job)}
+              Confirm
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmUnlink(false)}
+              className="text-[10px] text-muted-foreground hover:underline"
             >
-              <XCircle className="h-2.5 w-2.5" />
-              Close
-            </Button>
-          </>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-muted-foreground hover:text-[oklch(0.65_0.19_22)]"
+            onClick={() => setConfirmUnlink(true)}
+            disabled={softDelete.isPending}
+            aria-label="Unlink job"
+            data-ocid="linked-job-unlink-btn"
+          >
+            <Unlink className="h-3 w-3" />
+          </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Job Orders Section ─────────────────────────────────────────────────────────
+
+interface JobOrdersSectionProps {
+  clientId: string;
+  allJobs: Job[];
+  onEditJob: (job: Job) => void;
+  onMarkFilled: (job: Job) => void;
+  onMarkClosed: (job: Job) => void;
+  onAddJob: () => void;
+}
+
+function JobOrdersSection({
+  clientId,
+  allJobs,
+  onEditJob,
+  onMarkFilled,
+  onMarkClosed,
+  onAddJob,
+}: JobOrdersSectionProps) {
+  const { data: links = [], isLoading: linksLoading } =
+    useClientJobLinks(clientId);
+  const { data: submissionsAll = [] } = useJobsForClient(clientId);
+  const createLink = useCreateClientJobLink();
+  const [selectedJobId, setSelectedJobId] = useState<string>("");
+
+  // Poll every 5 seconds when tab is active
+  const { data: _poll } = useClientJobLinks(clientId);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        // react-query auto-refetches via invalidation; this is a lightweight visibility check placeholder
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const linkedJobIds = new Set(links.map((l: ClientJobLink) => l.jobId));
+  const linkableJobs = allJobs.filter(
+    (j) => j.status === "open" && !linkedJobIds.has(j.id),
+  );
+  const linkedJobs = allJobs.filter((j) => linkedJobIds.has(j.id));
+
+  // Stats
+  const totalCandidates = (submissionsAll as Job[]).length;
+  const placedCount = linkedJobs.filter((j) => j.status === "filled").length;
+
+  function handleLink() {
+    if (!selectedJobId) return;
+    createLink.mutate(
+      { clientId, jobId: selectedJobId },
+      {
+        onSuccess: () => {
+          toast.success("Job linked to client");
+          setSelectedJobId("");
+        },
+        onError: () => toast.error("Failed to link job"),
+      },
+    );
+  }
+
+  return (
+    <div className="px-4 py-4" data-ocid="job-orders-section">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-semibold text-foreground font-display uppercase tracking-wide">
+          Job Orders
+        </h3>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 px-2 text-[10px] gap-1"
+          onClick={onAddJob}
+          data-ocid="add-job-btn"
+        >
+          <Plus className="h-3 w-3" />
+          New Job
+        </Button>
+      </div>
+
+      {/* Stats Row */}
+      {links.length > 0 && (
+        <div
+          className="flex items-center gap-3 mb-3 text-[10px] text-muted-foreground"
+          data-ocid="job-orders-stats"
+        >
+          <span className="flex items-center gap-1">
+            <Briefcase className="h-3 w-3" />
+            <strong className="text-foreground">{links.length}</strong> linked
+          </span>
+          <span className="text-border">·</span>
+          <span className="flex items-center gap-1">
+            <Users className="h-3 w-3" />
+            <strong className="text-foreground">{totalCandidates}</strong> in
+            pipeline
+          </span>
+          <span className="text-border">·</span>
+          <span className="flex items-center gap-1">
+            <CheckCircle className="h-3 w-3 text-[oklch(0.68_0.22_142)]" />
+            <strong className="text-[oklch(0.68_0.22_142)]">
+              {placedCount}
+            </strong>{" "}
+            placed
+          </span>
+        </div>
+      )}
+
+      {/* Link existing job */}
+      {linkableJobs.length > 0 && (
+        <div
+          className="mb-3 flex items-center gap-2 p-2.5 rounded-md border border-border bg-muted/20"
+          data-ocid="link-job-section"
+        >
+          <Link2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+          <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+            <SelectTrigger
+              className="h-7 text-xs flex-1 min-w-0"
+              data-ocid="link-job-select"
+            >
+              <SelectValue placeholder="Link existing open job…" />
+            </SelectTrigger>
+            <SelectContent>
+              {linkableJobs.map((j) => (
+                <SelectItem key={j.id} value={j.id} className="text-xs">
+                  {j.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            className="h-7 px-2.5 text-xs shrink-0"
+            disabled={!selectedJobId || createLink.isPending}
+            onClick={handleLink}
+            data-ocid="link-job-btn"
+          >
+            {createLink.isPending ? "Linking…" : "Link Job"}
+          </Button>
+        </div>
+      )}
+
+      {/* Table */}
+      {linksLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-14 w-full" />
+          <Skeleton className="h-14 w-full" />
+        </div>
+      ) : links.length === 0 ? (
+        <div
+          className="rounded-md border border-dashed border-border bg-muted/10 px-4 py-5 text-center"
+          data-ocid="job-orders-empty"
+        >
+          <Briefcase className="h-5 w-5 text-muted-foreground mx-auto mb-2" />
+          <p className="text-xs font-medium text-foreground mb-0.5">
+            No jobs linked yet
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            Use the dropdown above to link an existing job, or create a new one.
+          </p>
+        </div>
+      ) : (
+        <div
+          className="rounded-md border border-border overflow-hidden"
+          data-ocid="linked-jobs-table"
+        >
+          {/* Table header */}
+          <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-x-3 px-3 py-1.5 bg-muted/30 border-b border-border">
+            {["Job / Pipeline", "Rate", "Placed", "Linked", "Actions", ""].map(
+              (h) => (
+                <span
+                  key={h}
+                  className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider"
+                >
+                  {h}
+                </span>
+              ),
+            )}
+          </div>
+          {linkedJobs.map((job) => {
+            const link = links.find((l: ClientJobLink) => l.jobId === job.id);
+            if (!link) return null;
+            return (
+              <LinkedJobRow
+                key={job.id}
+                job={job}
+                link={link}
+                clientId={clientId}
+                onEdit={onEditJob}
+                onMarkFilled={onMarkFilled}
+                onMarkClosed={onMarkClosed}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -395,9 +755,7 @@ function FollowUpItem({ followUp }: { followUp: FollowUp }) {
   const handleAction = (status: FollowUp["status"]) => {
     updateStatus.mutate(
       { id: followUp.id, status, approvedBy: "Manager" },
-      {
-        onSuccess: () => toast.success(`Follow-up ${status}`),
-      },
+      { onSuccess: () => toast.success(`Follow-up ${status}`) },
     );
   };
 
@@ -478,7 +836,6 @@ export default function ClientDetailPage() {
   const { clientId } = useParams({ from: "/clients/$clientId" });
 
   const { data: clients, isLoading: clientsLoading } = useClients();
-  const { data: jobs, isLoading: jobsLoading } = useJobsForClient(clientId);
   const { data: allJobs = [] } = useJobs();
   const { data: activities, isLoading: activitiesLoading } =
     useActivities(clientId);
@@ -493,22 +850,11 @@ export default function ClientDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [jobModalOpen, setJobModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
-  const [linkJobId, setLinkJobId] = useState<string>("");
-  const [isLinking, setIsLinking] = useState(false);
 
   const client = (clients ?? []).find((c) => c.id === clientId);
   const followUps = (allFollowUps ?? []).filter((f) => f.entityId === clientId);
   const pendingFollowUps = followUps.filter((f) => f.status === "pending");
 
-  // Jobs already linked to this client
-  const linkedJobIds = new Set((jobs ?? []).map((j) => j.id));
-
-  // Open jobs NOT already linked to this client — available to link
-  const linkableJobs = allJobs.filter(
-    (j) => j.status === "open" && !linkedJobIds.has(j.id),
-  );
-
-  // Stage advancement
   const next = client ? nextStage("client", client.currentStage) : null;
 
   function handleAdvanceStage() {
@@ -570,25 +916,6 @@ export default function ClientDetailPage() {
     );
   }
 
-  async function handleLinkJob() {
-    if (!linkJobId) return;
-    setIsLinking(true);
-    updateJobMutation.mutate(
-      { id: linkJobId, input: { clientId } as Partial<JobFormInput> },
-      {
-        onSuccess: () => {
-          toast.success("Job linked to client");
-          setLinkJobId("");
-          setIsLinking(false);
-        },
-        onError: () => {
-          toast.error("Failed to link job");
-          setIsLinking(false);
-        },
-      },
-    );
-  }
-
   if (clientsLoading) {
     return (
       <div className="p-4 space-y-4">
@@ -619,7 +946,6 @@ export default function ClientDetailPage() {
   }
 
   const isAtRisk = client.healthScore < 40;
-  const openJobs = (jobs ?? []).filter((j) => j.status === "open");
 
   return (
     <div className="flex flex-col h-full" data-ocid="client-detail-page">
@@ -784,93 +1110,15 @@ export default function ClientDetailPage() {
               )}
             </div>
 
-            {/* Job Orders */}
-            <div className="px-4 py-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-foreground font-display uppercase tracking-wide">
-                  Job Orders
-                  <span className="ml-2 text-muted-foreground font-normal">
-                    ({(jobs ?? []).length} total · {openJobs.length} open)
-                  </span>
-                </h3>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 px-2 text-[10px] gap-1"
-                  onClick={() => setJobModalOpen(true)}
-                  data-ocid="add-job-btn"
-                >
-                  <Plus className="h-3 w-3" />
-                  Add Job
-                </Button>
-              </div>
-
-              {/* Link existing job */}
-              {linkableJobs.length > 0 && (
-                <div
-                  className="mb-3 flex items-center gap-2 p-2.5 rounded-md border border-border bg-muted/20"
-                  data-ocid="link-job-section"
-                >
-                  <Link2 className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                  <Select value={linkJobId} onValueChange={setLinkJobId}>
-                    <SelectTrigger
-                      className="h-7 text-xs flex-1 min-w-0"
-                      data-ocid="link-job-select"
-                    >
-                      <SelectValue placeholder="Link existing open job…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {linkableJobs.map((j) => (
-                        <SelectItem key={j.id} value={j.id} className="text-xs">
-                          {j.title}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    size="sm"
-                    className="h-7 px-2.5 text-xs shrink-0"
-                    disabled={
-                      !linkJobId || isLinking || updateJobMutation.isPending
-                    }
-                    onClick={handleLinkJob}
-                    data-ocid="link-job-btn"
-                  >
-                    {isLinking ? "Linking…" : "Link Job"}
-                  </Button>
-                </div>
-              )}
-
-              {jobsLoading ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-16 w-full" />
-                  <Skeleton className="h-16 w-full" />
-                </div>
-              ) : (jobs ?? []).length === 0 ? (
-                <EmptyState
-                  icon={Briefcase}
-                  title="No job orders yet"
-                  message="Add a new job order or link an existing one to this client."
-                  action={{
-                    label: "Add Job Order",
-                    onClick: () => setJobModalOpen(true),
-                  }}
-                  className="py-6"
-                />
-              ) : (
-                <div className="space-y-2" data-ocid="job-orders-list">
-                  {(jobs ?? []).map((job) => (
-                    <JobCard
-                      key={job.id}
-                      job={job}
-                      onEdit={(j) => setEditingJob(j)}
-                      onMarkFilled={handleJobMarkFilled}
-                      onMarkClosed={handleJobMarkClosed}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+            {/* Enhanced Job Orders Section */}
+            <JobOrdersSection
+              clientId={clientId}
+              allJobs={allJobs}
+              onEditJob={(j) => setEditingJob(j)}
+              onMarkFilled={handleJobMarkFilled}
+              onMarkClosed={handleJobMarkClosed}
+              onAddJob={() => setJobModalOpen(true)}
+            />
 
             {/* Pending Follow-Ups */}
             {pendingFollowUps.length > 0 && (

@@ -7,6 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -21,25 +28,36 @@ import {
   useVendors,
 } from "@/hooks/use-crm";
 import { computeHealthStatus } from "@/lib/utils/health";
-import { VENDOR_STAGES, stageRequiresApproval } from "@/lib/utils/pipeline";
-import type { Submission, Vendor } from "@/types/crm";
-import { PIPELINE_STAGES } from "@/types/crm";
+import {
+  PIPELINE_STAGE_COLORS,
+  PIPELINE_STAGE_LABELS,
+  VENDOR_STAGES,
+  getDaysInStage,
+  stageRequiresApproval,
+} from "@/lib/utils/pipeline";
+import type { Submission, SubmissionPipelineStage, Vendor } from "@/types/crm";
 import type { ActivityFormInput, VendorFormInput } from "@/types/forms";
 import { Link, useParams } from "@tanstack/react-router";
 import {
+  AlertTriangle,
   ArrowLeft,
+  ArrowUpDown,
   Building2,
   CheckCircle,
+  ChevronRight,
   Clock,
   Edit2,
+  ExternalLink,
+  Filter,
   Mail,
   Phone,
   Plus,
   Timer,
+  TrendingUp,
   Users,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -51,106 +69,380 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 
-// ── Stage Colors ──────────────────────────────────────────────────────────────
+// ── Outcome Helpers ───────────────────────────────────────────────────────────
 
-const STAGE_COLOR_MAP: Record<string, string> = {
-  "Resume Sent":
-    "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
-  "Screening Round":
-    "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
-  Selected:
-    "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
-  "Client Round":
-    "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
-  "Final Onboarding":
-    "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
+type Outcome = "Active" | "Placed" | "Rejected" | "On Hold";
+
+function getOutcome(stage: SubmissionPipelineStage | undefined): Outcome {
+  if (stage === "placed") return "Placed";
+  if (stage === "rejected") return "Rejected";
+  if (stage === "offer_extended" || stage === "offer_accepted")
+    return "On Hold";
+  return "Active";
+}
+
+const OUTCOME_CONFIG: Record<Outcome, { className: string }> = {
+  Active: {
+    className:
+      "border-[oklch(0.5_0.18_207)]/40 text-[oklch(0.5_0.18_207)] bg-[oklch(0.5_0.18_207)]/10",
+  },
+  Placed: {
+    className:
+      "border-[oklch(0.68_0.22_142)]/40 text-[oklch(0.68_0.22_142)] bg-[oklch(0.68_0.22_142)]/10",
+  },
+  Rejected: {
+    className:
+      "border-[oklch(0.65_0.19_22)]/40 text-[oklch(0.65_0.19_22)] bg-[oklch(0.65_0.19_22)]/10",
+  },
+  "On Hold": {
+    className:
+      "border-[oklch(0.85_0.24_80)]/40 text-[oklch(0.85_0.24_80)] bg-[oklch(0.85_0.24_80)]/10",
+  },
 };
 
-function StageBadge({ stage }: { stage?: string }) {
+// ── Stage Badge ───────────────────────────────────────────────────────────────
+
+function StageBadge({ stage }: { stage: SubmissionPipelineStage | undefined }) {
   if (!stage)
     return <span className="text-[10px] text-muted-foreground">—</span>;
-  const cls =
-    STAGE_COLOR_MAP[stage] ?? "bg-muted text-muted-foreground border-border";
+  const color = PIPELINE_STAGE_COLORS[stage] ?? "#6b7280";
+  const label = PIPELINE_STAGE_LABELS[stage] ?? stage;
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium ${cls}`}
+      className="inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-medium"
+      style={{
+        borderColor: `${color}40`,
+        color,
+        backgroundColor: `${color}15`,
+      }}
     >
-      {stage}
+      {label}
     </span>
   );
 }
 
-// ── Shared Profiles Section ───────────────────────────────────────────────────
+// ── Stats Card ────────────────────────────────────────────────────────────────
+
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  accent?: string;
+}) {
+  return (
+    <div
+      className="bg-muted/30 border border-border rounded-md px-3 py-2.5 space-y-0.5"
+      data-ocid="stat-card"
+    >
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+        {label}
+      </p>
+      <p
+        className="text-xl font-bold font-display leading-none"
+        style={accent ? { color: accent } : undefined}
+      >
+        {value}
+      </p>
+      {sub && <p className="text-[10px] text-muted-foreground">{sub}</p>}
+    </div>
+  );
+}
+
+// ── Enhanced Shared Profiles Section ─────────────────────────────────────────
+
+type SortKey = "date" | "stage" | "days";
+type OutcomeFilter = "All" | Outcome;
 
 function SharedProfilesSection({ vendorId }: { vendorId: string }) {
   const { data: submissions = [], isLoading } =
     useSubmissionsForVendor(vendorId);
+  const [sortKey, setSortKey] = useState<SortKey>("date");
+  const [sortAsc, setSortAsc] = useState(false);
+  const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>("All");
+
+  // Poll every 5s when tab active
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // visibility-gated polling; react-query handles actual refetch via staleTime
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Stats
+  const total = submissions.length;
+  const placed = submissions.filter(
+    (s: Submission) => s.pipelineStage === "placed",
+  ).length;
+  const active = submissions.filter((s: Submission) => {
+    const stage = s.pipelineStage;
+    return stage && stage !== "placed" && stage !== "rejected";
+  }).length;
+  const conversionRate = total > 0 ? Math.round((placed / total) * 100) : 0;
+
+  // Filter + sort
+  const filtered = useMemo(() => {
+    let list = submissions as Submission[];
+    if (outcomeFilter !== "All") {
+      list = list.filter((s) => getOutcome(s.pipelineStage) === outcomeFilter);
+    }
+    return [...list].sort((a, b) => {
+      let diff = 0;
+      if (sortKey === "date") {
+        diff = a.submittedAt - b.submittedAt;
+      } else if (sortKey === "stage") {
+        const stageOrder = Object.keys(PIPELINE_STAGE_LABELS);
+        diff =
+          stageOrder.indexOf(a.pipelineStage ?? "") -
+          stageOrder.indexOf(b.pipelineStage ?? "");
+      } else if (sortKey === "days") {
+        diff =
+          getDaysInStage(a.lastStageChangeAt, String(a.submittedAt)) -
+          getDaysInStage(b.lastStageChangeAt, String(b.submittedAt));
+      }
+      return sortAsc ? diff : -diff;
+    });
+  }, [submissions, sortKey, sortAsc, outcomeFilter]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) setSortAsc((v) => !v);
+    else {
+      setSortKey(key);
+      setSortAsc(false);
+    }
+  }
+
+  function SortHeader({ label, sKey }: { label: string; sKey: SortKey }) {
+    const active = sortKey === sKey;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(sKey)}
+        className={`flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+          active
+            ? "text-foreground"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+        data-ocid={`sort-${sKey}`}
+      >
+        {label}
+        <ArrowUpDown
+          className={`h-2.5 w-2.5 ${active ? "opacity-100" : "opacity-40"}`}
+        />
+      </button>
+    );
+  }
 
   return (
     <div
       className="p-4 border-b border-border"
       data-ocid="shared-profiles-section"
     >
-      <div className="flex items-center gap-2 mb-3">
-        <Users className="h-3.5 w-3.5 text-muted-foreground" />
-        <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
-          Shared Profiles
-        </p>
-        {submissions.length > 0 && (
-          <Badge variant="secondary" className="text-[9px] px-1.5 h-4">
-            {submissions.length}
-          </Badge>
+      {/* Section title */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Users className="h-3.5 w-3.5 text-muted-foreground" />
+          <p className="text-xs font-semibold text-foreground font-display uppercase tracking-wide">
+            Shared Profiles
+          </p>
+          {total > 0 && (
+            <Badge variant="secondary" className="text-[9px] px-1.5 h-4">
+              {total}
+            </Badge>
+          )}
+        </div>
+
+        {/* Outcome filter */}
+        {total > 0 && (
+          <div className="flex items-center gap-1.5">
+            <Filter className="h-3 w-3 text-muted-foreground" />
+            <Select
+              value={outcomeFilter}
+              onValueChange={(v) => setOutcomeFilter(v as OutcomeFilter)}
+            >
+              <SelectTrigger
+                className="h-6 text-[10px] w-[100px]"
+                data-ocid="outcome-filter"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(
+                  [
+                    "All",
+                    "Active",
+                    "Placed",
+                    "Rejected",
+                    "On Hold",
+                  ] as OutcomeFilter[]
+                ).map((o) => (
+                  <SelectItem key={o} value={o} className="text-xs">
+                    {o}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         )}
       </div>
 
+      {/* Stats Cards */}
+      {total > 0 && (
+        <div
+          className="grid grid-cols-2 gap-2 mb-3"
+          data-ocid="vendor-stats-row"
+        >
+          <StatCard label="Total Shared" value={total} sub="candidates" />
+          <StatCard
+            label="Active"
+            value={active}
+            sub="in pipeline"
+            accent="#6366f1"
+          />
+          <StatCard
+            label="Placed"
+            value={placed}
+            sub="successfully"
+            accent="#059669"
+          />
+          <StatCard
+            label="Conversion"
+            value={`${conversionRate}%`}
+            sub="placement rate"
+            accent={
+              conversionRate >= 30
+                ? "#059669"
+                : conversionRate >= 15
+                  ? "#f59e0b"
+                  : "#ef4444"
+            }
+          />
+        </div>
+      )}
+
+      {/* Table */}
       {isLoading ? (
         <div className="space-y-1.5">
           {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-8 w-full rounded" />
+            <Skeleton key={i} className="h-10 w-full rounded" />
           ))}
         </div>
       ) : submissions.length === 0 ? (
         <div
-          className="rounded-md border border-border bg-muted/20 px-3 py-4 text-center"
+          className="rounded-md border border-dashed border-border bg-muted/10 px-3 py-5 text-center"
           data-ocid="shared-profiles-empty"
         >
-          <p className="text-xs text-muted-foreground">
-            No profiles shared yet
+          <Users className="h-5 w-5 text-muted-foreground mx-auto mb-2" />
+          <p className="text-xs font-medium text-foreground mb-0.5">
+            No candidates shared yet
           </p>
+          <p className="text-[10px] text-muted-foreground">
+            No candidates have been shared by this vendor yet.
+          </p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-md border border-border bg-muted/10 px-3 py-4 text-center text-xs text-muted-foreground">
+          No submissions match the "{outcomeFilter}" filter.
         </div>
       ) : (
         <div className="rounded-md border border-border overflow-hidden">
-          <div className="grid grid-cols-[1fr_1fr_1fr_80px] gap-2 px-3 py-1.5 bg-muted/30 border-b border-border">
-            {["Candidate", "Job", "Stage", "Date"].map((h) => (
-              <span
-                key={h}
-                className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider"
-              >
-                {h}
-              </span>
-            ))}
+          {/* Table Header */}
+          <div className="grid grid-cols-[auto_1fr_1fr_auto_auto_auto_auto] gap-x-2 px-3 py-1.5 bg-muted/30 border-b border-border items-center">
+            <SortHeader label="Date" sKey="date" />
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Candidate
+            </span>
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Job
+            </span>
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Client
+            </span>
+            <SortHeader label="Stage" sKey="stage" />
+            <SortHeader label="Days" sKey="days" />
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Outcome
+            </span>
           </div>
-          {submissions.map((sub: Submission) => (
-            <div
-              key={sub.id}
-              className="grid grid-cols-[1fr_1fr_1fr_80px] gap-2 px-3 py-2 border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors duration-150 text-xs items-center"
-              data-ocid="shared-profile-row"
-            >
-              <span className="font-medium text-foreground truncate">
-                {sub.candidateName || "—"}
-              </span>
-              <span className="text-muted-foreground truncate">
-                {sub.jobTitle || "—"}
-              </span>
-              <StageBadge stage={sub.pipelineStage} />
-              <span className="text-muted-foreground text-[10px]">
-                {new Date(sub.submittedAt).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                })}
-              </span>
-            </div>
-          ))}
+
+          {filtered.map((sub: Submission) => {
+            const days = getDaysInStage(
+              sub.lastStageChangeAt,
+              String(sub.submittedAt),
+            );
+            const outcome = getOutcome(sub.pipelineStage);
+            const outcomeConfig = OUTCOME_CONFIG[outcome];
+            const isStale = days > 7;
+
+            return (
+              <div
+                key={sub.id}
+                className="grid grid-cols-[auto_1fr_1fr_auto_auto_auto_auto] gap-x-2 px-3 py-2.5 border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors items-center"
+                data-ocid="shared-profile-row"
+              >
+                {/* Date */}
+                <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                  {new Date(sub.submittedAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+
+                {/* Candidate */}
+                <span className="text-xs font-medium text-foreground truncate min-w-0">
+                  {sub.candidateName || "—"}
+                </span>
+
+                {/* Job */}
+                <span className="text-xs text-muted-foreground truncate min-w-0">
+                  {sub.jobTitle || "—"}
+                </span>
+
+                {/* Client */}
+                <span className="text-[10px] text-muted-foreground truncate max-w-[80px]">
+                  {sub.clientName || "—"}
+                </span>
+
+                {/* Stage */}
+                <div className="flex-shrink-0">
+                  <StageBadge stage={sub.pipelineStage} />
+                </div>
+
+                {/* Days in Stage */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {isStale ? (
+                    <AlertTriangle className="h-2.5 w-2.5 text-[oklch(0.85_0.24_80)]" />
+                  ) : (
+                    <Clock className="h-2.5 w-2.5 text-muted-foreground" />
+                  )}
+                  <span
+                    className={`text-[10px] font-medium ${isStale ? "text-[oklch(0.85_0.24_80)]" : "text-muted-foreground"}`}
+                    title={
+                      isStale
+                        ? "Stale — more than 7 days in this stage"
+                        : undefined
+                    }
+                  >
+                    {days}d
+                  </span>
+                </div>
+
+                {/* Outcome */}
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] py-0 h-5 flex-shrink-0 ${outcomeConfig.className}`}
+                  data-ocid="outcome-badge"
+                >
+                  {outcome}
+                </Badge>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -163,11 +455,7 @@ function MetricCard({
   label,
   value,
   sub,
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-}) {
+}: { label: string; value: string | number; sub?: string }) {
   return (
     <div className="bg-muted/30 border border-border rounded-md px-3 py-2">
       <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">
@@ -314,10 +602,7 @@ function EditVendorForm({
 function LogActivityForm({
   entityId,
   onDone,
-}: {
-  entityId: string;
-  onDone: () => void;
-}) {
+}: { entityId: string; onDone: () => void }) {
   const logActivity = useLogActivity();
   const [form, setForm] = useState<ActivityFormInput>({
     entityId,
@@ -585,11 +870,7 @@ function SubmissionsChart() {
 
 // ── Stage Selector ────────────────────────────────────────────────────────────
 
-function StageSelector({
-  vendor,
-}: {
-  vendor: Vendor;
-}) {
+function StageSelector({ vendor }: { vendor: Vendor }) {
   const updateStage = useUpdateEntityStage();
   const createApproval = useCreateApprovalItem();
 
@@ -614,9 +895,7 @@ function StageSelector({
     } else {
       updateStage.mutate(
         { entityId: vendor.id, entityType: "vendor", newStage },
-        {
-          onSuccess: () => toast.success(`Stage updated to ${newStage}`),
-        },
+        { onSuccess: () => toast.success(`Stage updated to ${newStage}`) },
       );
     }
   }
@@ -729,7 +1008,7 @@ export default function VendorDetailPage() {
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <span className="text-xs text-muted-foreground">Vendors</span>
-          <span className="text-xs text-muted-foreground">/</span>
+          <ChevronRight className="h-3 w-3 text-muted-foreground/50" />
           <span className="text-xs text-foreground font-medium truncate">
             {vendor.name}
           </span>
@@ -774,7 +1053,6 @@ export default function VendorDetailPage() {
           </Button>
         </div>
 
-        {/* Stage progress */}
         <StageProgressBar
           stages={VENDOR_STAGES}
           currentStage={vendor.currentStage}
@@ -786,8 +1064,8 @@ export default function VendorDetailPage() {
       <div className="flex-1 overflow-auto bg-background">
         <div className="grid md:grid-cols-[300px_1fr] gap-0 h-full">
           {/* Left column */}
-          <div className="border-r border-border flex flex-col gap-0">
-            {/* Vendor info */}
+          <div className="border-r border-border flex flex-col gap-0 overflow-auto">
+            {/* Contact Info */}
             <div className="p-4 space-y-2 border-b border-border">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold mb-2">
                 Contact Info
@@ -847,7 +1125,10 @@ export default function VendorDetailPage() {
 
             {/* Follow-ups */}
             {vendorFollowUps.length > 0 && (
-              <div className="p-4 space-y-2" data-ocid="vendor-follow-ups">
+              <div
+                className="p-4 space-y-2 border-b border-border"
+                data-ocid="vendor-follow-ups"
+              >
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-semibold">
                   Pending Follow-Ups ({vendorFollowUps.length})
                 </p>
@@ -858,48 +1139,50 @@ export default function VendorDetailPage() {
                 </div>
               </div>
             )}
-
-            {/* Shared Profiles */}
-            <SharedProfilesSection vendorId={vendorId} />
           </div>
 
-          {/* Right column — Activity Timeline */}
-          <div className="flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
-              <div className="flex items-center gap-2">
-                <p className="text-xs font-semibold text-foreground">
-                  Activity Timeline
-                </p>
-                <Badge variant="secondary" className="text-[9px] px-1.5">
-                  {activities.length}
-                </Badge>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setShowActivityModal(true)}
-                className="h-7 gap-1 text-xs"
-                data-ocid="add-activity-btn"
-              >
-                <Plus className="h-3 w-3" />
-                Log Activity
-              </Button>
-            </div>
+          {/* Right column */}
+          <div className="flex flex-col overflow-auto">
+            {/* Enhanced Shared Profiles */}
+            <SharedProfilesSection vendorId={vendorId} />
 
-            <div className="flex-1 overflow-auto p-4">
-              {activitiesLoading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <Skeleton key={i} className="h-12 w-full" />
-                  ))}
+            {/* Activity Timeline */}
+            <div className="flex flex-col flex-1">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold text-foreground">
+                    Activity Timeline
+                  </p>
+                  <Badge variant="secondary" className="text-[9px] px-1.5">
+                    {activities.length}
+                  </Badge>
                 </div>
-              ) : (
-                <ActivityTimeline
-                  activities={activities}
-                  emptyMessage="No activities yet. Log the first interaction."
-                />
-              )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowActivityModal(true)}
+                  className="h-7 gap-1 text-xs"
+                  data-ocid="add-activity-btn"
+                >
+                  <Plus className="h-3 w-3" />
+                  Log Activity
+                </Button>
+              </div>
+              <div className="flex-1 overflow-auto p-4">
+                {activitiesLoading ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((i) => (
+                      <Skeleton key={i} className="h-12 w-full" />
+                    ))}
+                  </div>
+                ) : (
+                  <ActivityTimeline
+                    activities={activities}
+                    emptyMessage="No activities yet. Log the first interaction."
+                  />
+                )}
+              </div>
             </div>
           </div>
         </div>

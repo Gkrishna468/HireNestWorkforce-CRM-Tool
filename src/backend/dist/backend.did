@@ -33,6 +33,17 @@ type Vendor =
    submissionsAccepted: nat;
  };
 type Timestamp = int;
+type SubmissionPipelineStage = text;
+type SubmissionInput = 
+ record {
+   candidateId: EntityId;
+   jobId: EntityId;
+   notes: opt text;
+   rateProposed: float64;
+   resumeId: opt EntityId;
+   submittedBy: text;
+   vendorId: opt EntityId;
+ };
 type Submission = 
  record {
    approvedAt: opt Timestamp;
@@ -40,11 +51,56 @@ type Submission =
    candidateId: EntityId;
    id: EntityId;
    jobId: EntityId;
+   notes: opt text;
+   pipelineHistory: vec PipelineHistoryEntry;
+   pipelineStage: SubmissionPipelineStage;
    rateProposed: float64;
-   status: text;
+   resumeId: opt EntityId;
    submittedAt: Timestamp;
    submittedBy: text;
    vendorId: opt EntityId;
+ };
+type ResumeJobMatch = 
+ record {
+   availScore: float64;
+   expScore: float64;
+   jobId: EntityId;
+   jobTitle: text;
+   matchScore: float64;
+   rateScore: float64;
+   skillsScore: float64;
+ };
+type ResumeInput = 
+ record {
+   candidateName: text;
+   email: opt text;
+   extractedExperience: text;
+   extractedRole: text;
+   extractedSkills: vec text;
+   fileName: text;
+   fileUrl: text;
+   location: opt text;
+   phone: opt text;
+   rawText: text;
+   sourceVendorId: opt EntityId;
+   yearsExperience: opt int;
+ };
+type Resume = 
+ record {
+   candidateName: text;
+   createdAt: Timestamp;
+   email: opt text;
+   extractedExperience: text;
+   extractedRole: text;
+   extractedSkills: vec text;
+   fileName: text;
+   fileUrl: text;
+   id: EntityId;
+   location: opt text;
+   phone: opt text;
+   rawText: text;
+   sourceVendorId: opt EntityId;
+   yearsExperience: opt int;
  };
 type RecruiterSummary = 
  record {
@@ -108,6 +164,13 @@ type PipelineStage =
    slaHours: nat;
    stageName: text;
    stageOrder: nat;
+ };
+type PipelineHistoryEntry = 
+ record {
+   changedAt: int;
+   changedBy: text;
+   fromStage: text;
+   toStage: text;
  };
 type MorningBriefing = 
  record {
@@ -277,8 +340,8 @@ service : {
   createJob: (clientId: text, title: text, requirements: text, rateMin:
    float64, rateMax: float64) -> (Job);
   createRecruiter: (name: text, email: text, phone: text) -> (Recruiter);
-  createSubmission: (candidateId: text, jobId: text, vendorId: opt text,
-   submittedBy: text, rateProposed: float64) -> (Submission);
+  createResume: (input: ResumeInput) -> (Resume);
+  createSubmission: (input: SubmissionInput) -> (Submission);
   createVendor: (name: text, company: text, contactName: text, email: 
    text, phone: text, specialty: text, rateMin: float64, rateMax: float64,
    notes: text) -> (Vendor);
@@ -289,6 +352,8 @@ service : {
   deleteCandidate: (id: text) -> (bool);
   deleteClient: (id: text) -> (bool);
   deleteRecruiter: (id: text) -> (bool);
+  deleteResume: (id: text) -> (bool);
+  deleteSubmission: (id: text) -> (bool);
   deleteVendor: (id: text) -> (bool);
   getActivitiesForEntity: (entityId: text) -> (vec Activity) query;
   getAllActivities: () -> (vec Activity) query;
@@ -303,6 +368,8 @@ service : {
    (opt RecruiterMetrics) query;
   getRecruiterMetricsHistory: (recruiterId: text) ->
    (vec RecruiterMetrics) query;
+  getResume: (id: text) -> (opt Resume) query;
+  getSubmission: (id: text) -> (opt Submission) query;
   getVendor: (id: text) -> (opt Vendor) query;
   getVendorMetrics: (vendorId: text, date: text) -> (opt VendorMetrics) query;
   listApprovalHistory: () -> (vec ApprovalItem) query;
@@ -316,9 +383,11 @@ service : {
   listPendingApprovals: () -> (vec ApprovalItem) query;
   listPendingFollowUps: () -> (vec FollowUp) query;
   listRecruiters: () -> (vec Recruiter) query;
+  listResumes: () -> (vec Resume) query;
   listSubmissions: () -> (vec Submission) query;
   listSubmissionsForCandidate: (candidateId: text) -> (vec Submission) query;
   listSubmissionsForJob: (jobId: text) -> (vec Submission) query;
+  listSubmissionsForResume: (resumeId: text) -> (vec Submission) query;
   listVendors: () -> (vec Vendor) query;
   logActivity: (entityId: text, entityType: EntityType, activityType: 
    text, direction: text, notes: text, createdBy: text, requiresApproval:
@@ -331,6 +400,7 @@ service : {
    submissionsAccepted: nat, interviewsScheduled: nat, placements: nat,
    responseTimeHours: float64, qualityScore: float64) -> (VendorMetrics);
   matchBench: (jobId: text) -> (vec BenchMatch) query;
+  matchResumeToJobs: (resumeId: text) -> (vec ResumeJobMatch) query;
   rejectItem: (id: text, rejectedBy: text, notes: text) -> (bool);
   runFollowUpEngine: () -> (nat);
   seedSampleData: () -> (text);
@@ -347,7 +417,10 @@ service : {
    snoozedUntil: opt int) -> (bool);
   updateJob: (updated: Job) -> (bool);
   updateRecruiter: (updated: Recruiter) -> (bool);
+  updateResume: (id: text, input: ResumeInput) -> (bool);
   updateSubmission: (updated: Submission) -> (bool);
+  updateSubmissionStage: (id: text, newStage: text, changedBy: text) ->
+   (bool);
   updateVendor: (updated: Vendor) -> (bool);
   uploadBenchRecords: (records: vec BenchRecordInput) ->
    (variant {

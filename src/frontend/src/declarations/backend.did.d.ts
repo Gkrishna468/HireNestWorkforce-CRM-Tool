@@ -146,6 +146,12 @@ export interface MorningBriefing {
   'aiSuggestions' : Array<string>,
   'pendingOfferApprovals' : bigint,
 }
+export interface PipelineHistoryEntry {
+  'changedAt' : bigint,
+  'changedBy' : string,
+  'fromStage' : string,
+  'toStage' : string,
+}
 export interface PipelineStage {
   'stageOrder' : bigint,
   'requiresApproval' : boolean,
@@ -203,18 +209,70 @@ export interface RecruiterSummary {
   'submissionsToday' : bigint,
   'flagged' : boolean,
 }
+export interface Resume {
+  'id' : EntityId,
+  'rawText' : string,
+  'sourceVendorId' : [] | [EntityId],
+  'yearsExperience' : [] | [bigint],
+  'createdAt' : Timestamp,
+  'fileName' : string,
+  'extractedRole' : string,
+  'email' : [] | [string],
+  'extractedSkills' : Array<string>,
+  'extractedExperience' : string,
+  'candidateName' : string,
+  'phone' : [] | [string],
+  'location' : [] | [string],
+  'fileUrl' : string,
+}
+export interface ResumeInput {
+  'rawText' : string,
+  'sourceVendorId' : [] | [EntityId],
+  'yearsExperience' : [] | [bigint],
+  'fileName' : string,
+  'extractedRole' : string,
+  'email' : [] | [string],
+  'extractedSkills' : Array<string>,
+  'extractedExperience' : string,
+  'candidateName' : string,
+  'phone' : [] | [string],
+  'location' : [] | [string],
+  'fileUrl' : string,
+}
+export interface ResumeJobMatch {
+  'availScore' : number,
+  'jobId' : EntityId,
+  'matchScore' : number,
+  'skillsScore' : number,
+  'jobTitle' : string,
+  'rateScore' : number,
+  'expScore' : number,
+}
 export interface Submission {
   'id' : EntityId,
   'rateProposed' : number,
-  'status' : string,
+  'pipelineHistory' : Array<PipelineHistoryEntry>,
   'approvedAt' : [] | [Timestamp],
   'approvedBy' : [] | [string],
   'jobId' : EntityId,
   'submittedAt' : Timestamp,
   'submittedBy' : string,
+  'resumeId' : [] | [EntityId],
+  'pipelineStage' : SubmissionPipelineStage,
   'vendorId' : [] | [EntityId],
+  'notes' : [] | [string],
   'candidateId' : EntityId,
 }
+export interface SubmissionInput {
+  'rateProposed' : number,
+  'jobId' : EntityId,
+  'submittedBy' : string,
+  'resumeId' : [] | [EntityId],
+  'vendorId' : [] | [EntityId],
+  'notes' : [] | [string],
+  'candidateId' : EntityId,
+}
+export type SubmissionPipelineStage = string;
 export type Timestamp = bigint;
 export interface Vendor {
   'id' : EntityId,
@@ -268,10 +326,8 @@ export interface _SERVICE {
   >,
   'createJob' : ActorMethod<[string, string, string, number, number], Job>,
   'createRecruiter' : ActorMethod<[string, string, string], Recruiter>,
-  'createSubmission' : ActorMethod<
-    [string, string, [] | [string], string, number],
-    Submission
-  >,
+  'createResume' : ActorMethod<[ResumeInput], Resume>,
+  'createSubmission' : ActorMethod<[SubmissionInput], Submission>,
   'createVendor' : ActorMethod<
     [string, string, string, string, string, string, number, number, string],
     Vendor
@@ -284,6 +340,8 @@ export interface _SERVICE {
   'deleteCandidate' : ActorMethod<[string], boolean>,
   'deleteClient' : ActorMethod<[string], boolean>,
   'deleteRecruiter' : ActorMethod<[string], boolean>,
+  'deleteResume' : ActorMethod<[string], boolean>,
+  'deleteSubmission' : ActorMethod<[string], boolean>,
   'deleteVendor' : ActorMethod<[string], boolean>,
   'getActivitiesForEntity' : ActorMethod<[string], Array<Activity>>,
   'getAllActivities' : ActorMethod<[], Array<Activity>>,
@@ -299,6 +357,8 @@ export interface _SERVICE {
     [] | [RecruiterMetrics]
   >,
   'getRecruiterMetricsHistory' : ActorMethod<[string], Array<RecruiterMetrics>>,
+  'getResume' : ActorMethod<[string], [] | [Resume]>,
+  'getSubmission' : ActorMethod<[string], [] | [Submission]>,
   'getVendor' : ActorMethod<[string], [] | [Vendor]>,
   'getVendorMetrics' : ActorMethod<[string, string], [] | [VendorMetrics]>,
   'listApprovalHistory' : ActorMethod<[], Array<ApprovalItem>>,
@@ -314,9 +374,11 @@ export interface _SERVICE {
   'listPendingApprovals' : ActorMethod<[], Array<ApprovalItem>>,
   'listPendingFollowUps' : ActorMethod<[], Array<FollowUp>>,
   'listRecruiters' : ActorMethod<[], Array<Recruiter>>,
+  'listResumes' : ActorMethod<[], Array<Resume>>,
   'listSubmissions' : ActorMethod<[], Array<Submission>>,
   'listSubmissionsForCandidate' : ActorMethod<[string], Array<Submission>>,
   'listSubmissionsForJob' : ActorMethod<[string], Array<Submission>>,
+  'listSubmissionsForResume' : ActorMethod<[string], Array<Submission>>,
   'listVendors' : ActorMethod<[], Array<Vendor>>,
   'logActivity' : ActorMethod<
     [string, EntityType, string, string, string, string, boolean],
@@ -331,6 +393,7 @@ export interface _SERVICE {
     VendorMetrics
   >,
   'matchBench' : ActorMethod<[string], Array<BenchMatch>>,
+  'matchResumeToJobs' : ActorMethod<[string], Array<ResumeJobMatch>>,
   'rejectItem' : ActorMethod<[string, string, string], boolean>,
   'runFollowUpEngine' : ActorMethod<[], bigint>,
   'seedSampleData' : ActorMethod<[], string>,
@@ -349,7 +412,9 @@ export interface _SERVICE {
   >,
   'updateJob' : ActorMethod<[Job], boolean>,
   'updateRecruiter' : ActorMethod<[Recruiter], boolean>,
+  'updateResume' : ActorMethod<[string, ResumeInput], boolean>,
   'updateSubmission' : ActorMethod<[Submission], boolean>,
+  'updateSubmissionStage' : ActorMethod<[string, string, string], boolean>,
   'updateVendor' : ActorMethod<[Vendor], boolean>,
   'uploadBenchRecords' : ActorMethod<
     [Array<BenchRecordInput>],

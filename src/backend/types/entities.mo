@@ -128,20 +128,6 @@ module {
     filledAt : ?Timestamp;
   };
 
-  // ── Submissions ───────────────────────────────────────────────────────────
-  public type Submission = {
-    id : EntityId;
-    candidateId : EntityId;
-    jobId : EntityId;
-    vendorId : ?EntityId;
-    submittedBy : Text;
-    rateProposed : Float;
-    status : Text; // pending/approved/rejected/interview/offer/placed
-    submittedAt : Timestamp;
-    approvedBy : ?Text;
-    approvedAt : ?Timestamp;
-  };
-
   // ── Bench List ────────────────────────────────────────────────────────────
   public type BenchRecord = {
     id : Nat;

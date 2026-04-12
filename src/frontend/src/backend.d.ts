@@ -7,46 +7,7 @@ export interface None {
     __kind__: "None";
 }
 export type Option<T> = Some<T> | None;
-export interface Candidate {
-    id: EntityId;
-    placementProbability: bigint;
-    source: string;
-    name: string;
-    createdAt: Timestamp;
-    salaryExpectation: number;
-    email: string;
-    experience: string;
-    availability: string;
-    pipelineStage: string;
-    daysInStage: bigint;
-    healthScore: bigint;
-    phone: string;
-    lastActivityAt: Timestamp;
-    lastContact: Timestamp;
-    skills: string;
-}
 export type Timestamp = bigint;
-export interface PulseRow {
-    healthStatus: HealthStatus;
-    pipelineStage: string;
-    entityId: EntityId;
-    actionNeeded: string;
-    entityName: string;
-    entityType: EntityType;
-    healthScore: bigint;
-    lastActivityAt: Timestamp;
-}
-export interface MorningBriefing {
-    clientInterviewsToday: bigint;
-    staleCandidates: bigint;
-    recruiterSummaries: Array<RecruiterSummary>;
-    vendorFollowUps: bigint;
-    pendingApprovals: bigint;
-    date: string;
-    generatedAt: Timestamp;
-    aiSuggestions: Array<string>;
-    pendingOfferApprovals: bigint;
-}
 export interface Recruiter {
     id: EntityId;
     productivityScore: bigint;
@@ -76,14 +37,6 @@ export interface RecruiterMetrics {
     interviewsScheduled: bigint;
     notes: string;
 }
-export interface BenchRecordInput {
-    rate: number;
-    role: string;
-    experience: string;
-    skill: string;
-    candidateName: string;
-    vendorName: string;
-}
 export interface RecruiterSummary {
     productivityScore: bigint;
     name: string;
@@ -92,16 +45,19 @@ export interface RecruiterSummary {
     submissionsToday: bigint;
     flagged: boolean;
 }
-export interface VendorMetrics {
-    id: EntityId;
-    date: string;
-    placements: bigint;
-    submissionsAccepted: bigint;
-    submissions: bigint;
-    interviewsScheduled: bigint;
-    qualityScore: number;
-    vendorId: EntityId;
-    responseTimeHours: number;
+export interface ResumeInput {
+    rawText: string;
+    sourceVendorId?: EntityId;
+    yearsExperience?: bigint;
+    fileName: string;
+    extractedRole: string;
+    email?: string;
+    extractedSkills: Array<string>;
+    extractedExperience: string;
+    candidateName: string;
+    phone?: string;
+    location?: string;
+    fileUrl: string;
 }
 export interface PulseDashboard {
     generatedAt: Timestamp;
@@ -128,6 +84,166 @@ export interface Job {
     filledAt?: Timestamp;
     requirements: string;
 }
+export interface SubmissionInput {
+    rateProposed: number;
+    jobId: EntityId;
+    submittedBy: string;
+    resumeId?: EntityId;
+    vendorId?: EntityId;
+    notes?: string;
+    candidateId: EntityId;
+}
+export interface PipelineStage {
+    stageOrder: bigint;
+    requiresApproval: boolean;
+    entityType: EntityType;
+    slaHours: bigint;
+    stageName: string;
+}
+export type SubmissionPipelineStage = string;
+export interface Resume {
+    id: EntityId;
+    rawText: string;
+    sourceVendorId?: EntityId;
+    yearsExperience?: bigint;
+    createdAt: Timestamp;
+    fileName: string;
+    extractedRole: string;
+    email?: string;
+    extractedSkills: Array<string>;
+    extractedExperience: string;
+    candidateName: string;
+    phone?: string;
+    location?: string;
+    fileUrl: string;
+}
+export interface BenchMatch {
+    id: bigint;
+    rate: number;
+    role: string;
+    importedAt: Timestamp;
+    matchScore: number;
+    experience: string;
+    skill: string;
+    candidateName: string;
+    vendorName: string;
+}
+export interface Vendor {
+    id: EntityId;
+    status: string;
+    contactName: string;
+    name: string;
+    createdAt: Timestamp;
+    rateMax: number;
+    rateMin: number;
+    submissionsAccepted: bigint;
+    submissions: bigint;
+    email: string;
+    specialty: string;
+    qualityScore: number;
+    company: string;
+    pipelineStage: string;
+    notes: string;
+    healthScore: bigint;
+    responseTimeHours: number;
+    phone: string;
+    lastActivityAt: Timestamp;
+}
+export interface Submission {
+    id: EntityId;
+    rateProposed: number;
+    pipelineHistory: Array<PipelineHistoryEntry>;
+    approvedAt?: Timestamp;
+    approvedBy?: string;
+    jobId: EntityId;
+    submittedAt: Timestamp;
+    submittedBy: string;
+    resumeId?: EntityId;
+    pipelineStage: SubmissionPipelineStage;
+    vendorId?: EntityId;
+    notes?: string;
+    candidateId: EntityId;
+}
+export interface Client {
+    id: EntityId;
+    hiringManager: string;
+    name: string;
+    createdAt: Timestamp;
+    email: string;
+    company: string;
+    pipelineStage: string;
+    notes: string;
+    healthScore: bigint;
+    phone: string;
+    lastActivityAt: Timestamp;
+    budget: number;
+    churnRisk: string;
+    timeline: string;
+}
+export interface Candidate {
+    id: EntityId;
+    placementProbability: bigint;
+    source: string;
+    name: string;
+    createdAt: Timestamp;
+    salaryExpectation: number;
+    email: string;
+    experience: string;
+    availability: string;
+    pipelineStage: string;
+    daysInStage: bigint;
+    healthScore: bigint;
+    phone: string;
+    lastActivityAt: Timestamp;
+    lastContact: Timestamp;
+    skills: string;
+}
+export interface PulseRow {
+    healthStatus: HealthStatus;
+    pipelineStage: string;
+    entityId: EntityId;
+    actionNeeded: string;
+    entityName: string;
+    entityType: EntityType;
+    healthScore: bigint;
+    lastActivityAt: Timestamp;
+}
+export interface MorningBriefing {
+    clientInterviewsToday: bigint;
+    staleCandidates: bigint;
+    recruiterSummaries: Array<RecruiterSummary>;
+    vendorFollowUps: bigint;
+    pendingApprovals: bigint;
+    date: string;
+    generatedAt: Timestamp;
+    aiSuggestions: Array<string>;
+    pendingOfferApprovals: bigint;
+}
+export interface BenchRecordInput {
+    rate: number;
+    role: string;
+    experience: string;
+    skill: string;
+    candidateName: string;
+    vendorName: string;
+}
+export interface VendorMetrics {
+    id: EntityId;
+    date: string;
+    placements: bigint;
+    submissionsAccepted: bigint;
+    submissions: bigint;
+    interviewsScheduled: bigint;
+    qualityScore: number;
+    vendorId: EntityId;
+    responseTimeHours: number;
+}
+export interface PipelineHistoryEntry {
+    changedAt: bigint;
+    changedBy: string;
+    fromStage: string;
+    toStage: string;
+}
 export interface Activity {
     id: EntityId;
     direction: string;
@@ -140,13 +256,6 @@ export interface Activity {
     notes: string;
     requiresApproval: boolean;
     entityType: EntityType;
-}
-export interface PipelineStage {
-    stageOrder: bigint;
-    requiresApproval: boolean;
-    entityType: EntityType;
-    slaHours: bigint;
-    stageName: string;
 }
 export interface FollowUp {
     id: EntityId;
@@ -178,65 +287,14 @@ export interface ApprovalItem {
     requestedAt: Timestamp;
     requestedBy: string;
 }
-export interface Client {
-    id: EntityId;
-    hiringManager: string;
-    name: string;
-    createdAt: Timestamp;
-    email: string;
-    company: string;
-    pipelineStage: string;
-    notes: string;
-    healthScore: bigint;
-    phone: string;
-    lastActivityAt: Timestamp;
-    budget: number;
-    churnRisk: string;
-    timeline: string;
-}
-export interface Vendor {
-    id: EntityId;
-    status: string;
-    contactName: string;
-    name: string;
-    createdAt: Timestamp;
-    rateMax: number;
-    rateMin: number;
-    submissionsAccepted: bigint;
-    submissions: bigint;
-    email: string;
-    specialty: string;
-    qualityScore: number;
-    company: string;
-    pipelineStage: string;
-    notes: string;
-    healthScore: bigint;
-    responseTimeHours: number;
-    phone: string;
-    lastActivityAt: Timestamp;
-}
-export interface Submission {
-    id: EntityId;
-    rateProposed: number;
-    status: string;
-    approvedAt?: Timestamp;
-    approvedBy?: string;
+export interface ResumeJobMatch {
+    availScore: number;
     jobId: EntityId;
-    submittedAt: Timestamp;
-    submittedBy: string;
-    vendorId?: EntityId;
-    candidateId: EntityId;
-}
-export interface BenchMatch {
-    id: bigint;
-    rate: number;
-    role: string;
-    importedAt: Timestamp;
     matchScore: number;
-    experience: string;
-    skill: string;
-    candidateName: string;
-    vendorName: string;
+    skillsScore: number;
+    jobTitle: string;
+    rateScore: number;
+    expScore: number;
 }
 export enum EntityType {
     client = "client",
@@ -257,7 +315,8 @@ export interface backendInterface {
     createFollowUp(entityId: string, entityType: EntityType, triggerReason: string, suggestedAction: string, suggestedMessage: string): Promise<FollowUp>;
     createJob(clientId: string, title: string, requirements: string, rateMin: number, rateMax: number): Promise<Job>;
     createRecruiter(name: string, email: string, phone: string): Promise<Recruiter>;
-    createSubmission(candidateId: string, jobId: string, vendorId: string | null, submittedBy: string, rateProposed: number): Promise<Submission>;
+    createResume(input: ResumeInput): Promise<Resume>;
+    createSubmission(input: SubmissionInput): Promise<Submission>;
     createVendor(name: string, company: string, contactName: string, email: string, phone: string, specialty: string, rateMin: number, rateMax: number, notes: string): Promise<Vendor>;
     deleteBenchRecord(id: bigint): Promise<{
         __kind__: "ok";
@@ -269,6 +328,8 @@ export interface backendInterface {
     deleteCandidate(id: string): Promise<boolean>;
     deleteClient(id: string): Promise<boolean>;
     deleteRecruiter(id: string): Promise<boolean>;
+    deleteResume(id: string): Promise<boolean>;
+    deleteSubmission(id: string): Promise<boolean>;
     deleteVendor(id: string): Promise<boolean>;
     getActivitiesForEntity(entityId: string): Promise<Array<Activity>>;
     getAllActivities(): Promise<Array<Activity>>;
@@ -281,6 +342,8 @@ export interface backendInterface {
     getRecruiter(id: string): Promise<Recruiter | null>;
     getRecruiterMetrics(recruiterId: string, date: string): Promise<RecruiterMetrics | null>;
     getRecruiterMetricsHistory(recruiterId: string): Promise<Array<RecruiterMetrics>>;
+    getResume(id: string): Promise<Resume | null>;
+    getSubmission(id: string): Promise<Submission | null>;
     getVendor(id: string): Promise<Vendor | null>;
     getVendorMetrics(vendorId: string, date: string): Promise<VendorMetrics | null>;
     listApprovalHistory(): Promise<Array<ApprovalItem>>;
@@ -293,14 +356,17 @@ export interface backendInterface {
     listPendingApprovals(): Promise<Array<ApprovalItem>>;
     listPendingFollowUps(): Promise<Array<FollowUp>>;
     listRecruiters(): Promise<Array<Recruiter>>;
+    listResumes(): Promise<Array<Resume>>;
     listSubmissions(): Promise<Array<Submission>>;
     listSubmissionsForCandidate(candidateId: string): Promise<Array<Submission>>;
     listSubmissionsForJob(jobId: string): Promise<Array<Submission>>;
+    listSubmissionsForResume(resumeId: string): Promise<Array<Submission>>;
     listVendors(): Promise<Array<Vendor>>;
     logActivity(entityId: string, entityType: EntityType, activityType: string, direction: string, notes: string, createdBy: string, requiresApproval: boolean): Promise<Activity>;
     logRecruiterMetrics(recruiterId: string, date: string, callsMade: bigint, emailsSent: bigint, submissions: bigint, interviewsScheduled: bigint, tasksCompleted: bigint, productivityScore: bigint, notes: string): Promise<RecruiterMetrics>;
     logVendorMetrics(vendorId: string, date: string, submissions: bigint, submissionsAccepted: bigint, interviewsScheduled: bigint, placements: bigint, responseTimeHours: number, qualityScore: number): Promise<VendorMetrics>;
     matchBench(jobId: string): Promise<Array<BenchMatch>>;
+    matchResumeToJobs(resumeId: string): Promise<Array<ResumeJobMatch>>;
     rejectItem(id: string, rejectedBy: string, notes: string): Promise<boolean>;
     runFollowUpEngine(): Promise<bigint>;
     seedSampleData(): Promise<string>;
@@ -318,7 +384,9 @@ export interface backendInterface {
     updateFollowUpStatus(id: string, status: string, approvedBy: string | null, snoozedUntil: bigint | null): Promise<boolean>;
     updateJob(updated: Job): Promise<boolean>;
     updateRecruiter(updated: Recruiter): Promise<boolean>;
+    updateResume(id: string, input: ResumeInput): Promise<boolean>;
     updateSubmission(updated: Submission): Promise<boolean>;
+    updateSubmissionStage(id: string, newStage: string, changedBy: string): Promise<boolean>;
     updateVendor(updated: Vendor): Promise<boolean>;
     uploadBenchRecords(records: Array<BenchRecordInput>): Promise<{
         __kind__: "ok";

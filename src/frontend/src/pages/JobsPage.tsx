@@ -21,22 +21,48 @@ import {
   useCreateJob,
   useJobs,
   useMatchBench,
+  useResumes,
+  useSubmissions,
   useSubmissionsForJob,
   useUpdateJob,
   useUpdateJobStatus,
-  useUpdateSubmission,
+  useUpdateSubmissionStage,
+  useVendors,
 } from "@/hooks/use-crm";
-import type { BenchMatch, Client, Job, JobStatus } from "@/types/crm";
-import { PIPELINE_STAGES } from "@/types/crm";
-import type { JobFormInput } from "@/types/forms";
+import {
+  STAGE_ORDER,
+  getDaysInStage,
+  getStageColor,
+  getStageLabel,
+  isValidTransition,
+} from "@/lib/utils/pipeline";
+import type {
+  BenchMatch,
+  Client,
+  Job,
+  JobStatus,
+  Submission,
+} from "@/types/crm";
+import {
+  ALLOWED_STAGE_TRANSITIONS,
+  PIPELINE_STAGES,
+  PIPELINE_STAGE_LABELS,
+} from "@/types/crm";
+import type { SubmissionPipelineStage } from "@/types/crm";
+import type { JobFormInput, SubmissionUpdateInput } from "@/types/forms";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   Briefcase,
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
+  ExternalLink,
+  History,
   IndianRupee,
+  KanbanSquare,
+  LayoutList,
   Linkedin,
   MapPin,
   MessageSquare,
@@ -46,7 +72,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -66,6 +92,12 @@ interface ParsedJobFields {
   rateCurrency: string;
 }
 
+type ToastState = {
+  message: string;
+  type: "success" | "error" | "warning";
+  visible: boolean;
+};
+
 // ── parseJobRequirementText ───────────────────────────────────────────────────
 
 export function parseJobRequirementText(text: string): ParsedJobFields {
@@ -84,12 +116,10 @@ export function parseJobRequirementText(text: string): ParsedJobFields {
     return "";
   }
 
-  // Title: look for "Hiring:", "Position:", "Role:", "Job Title:", or first "bold" line
   let title = extract([
     /^(?:hiring[:\-\s*]*|position[:\-\s*]*|role[:\-\s*]*|job\s*title[:\-\s*]*|opening[:\-\s*]*|vacancy[:\-\s*]*)(.+)$/i,
     /^[*_]{1,2}([^*_\n]+)[*_]{1,2}$/,
   ]);
-  // Fallback: grab first non-label line as title if short enough
   if (!title) {
     for (const line of lines) {
       if (
@@ -105,35 +135,29 @@ export function parseJobRequirementText(text: string): ParsedJobFields {
     }
   }
 
-  // Company
   const companyName = extract([
     /^(?:company[:\-\s*]*|client[:\-\s*]*|organization[:\-\s*]*|org[:\-\s*]*|firm[:\-\s*]*)(.+)$/i,
   ]);
 
-  // Skills
   const requiredSkills = extract([
     /^(?:skills?[:\-\s*]*|required\s*skills?[:\-\s*]*|tech\s*stack[:\-\s*]*|technologies[:\-\s*]*|key\s*skills?[:\-\s*]*)(.+)$/i,
   ]);
 
-  // Experience
   const experience = extract([
     /^(?:exp(?:erience)?[:\-\s*]*|years?[:\-\s*]*)(.+)$/i,
     /(\d+\+?\s*(?:to|-|\–)?\s*\d*\+?\s*years?)/i,
     /(\d+\+?\s*years?)/i,
   ]);
 
-  // Rate / Compensation
   let rateType: RateType | "" = "";
   let rateAmount = "";
   let rateCurrency = "INR";
 
-  // Detect currency symbol
   if (/\$/.test(text)) rateCurrency = "USD";
   else if (/£/.test(text)) rateCurrency = "GBP";
   else if (/€/.test(text)) rateCurrency = "EUR";
   else rateCurrency = "INR";
 
-  // Try to find rate line
   const rateLine = lines.find(
     (l) =>
       /(?:ctc|salary|compensation|rate|budget|package|pay)[:\-\s*]/i.test(l) ||
@@ -161,20 +185,16 @@ export function parseJobRequirementText(text: string): ParsedJobFields {
       );
       if (m) rateAmount = m[1];
     }
-
-    // Fallback: grab first number from rate line
     if (!rateAmount) {
       const m = rateLine.match(/[₹$€£]?\s*(\d+(?:\.\d+)?)/);
       if (m) rateAmount = m[1];
     }
   }
 
-  // Location
   const location = extract([
     /^(?:location[:\-\s*]*|place[:\-\s*]*|city[:\-\s*]*|work\s*location[:\-\s*]*)(.+)$/i,
   ]);
 
-  // Responsibilities: grab text after "Responsibilities:" label
   let responsibilities = "";
   let inResponsibilities = false;
   const respLines: string[] = [];
@@ -185,13 +205,11 @@ export function parseJobRequirementText(text: string): ParsedJobFields {
       )
     ) {
       inResponsibilities = true;
-      // grab inline content after the label
       const after = line.replace(/^[^:]+:\s*/, "").trim();
       if (after) respLines.push(after);
       continue;
     }
     if (inResponsibilities) {
-      // stop at next label
       if (
         /^(?:skills?|experience|location|company|client|salary|rate|ctc|compensation|education|qualification)[:\-\s*]/i.test(
           line,
@@ -202,16 +220,12 @@ export function parseJobRequirementText(text: string): ParsedJobFields {
       respLines.push(line);
     }
   }
-  if (respLines.length) {
-    responsibilities = respLines.join("\n");
-  }
+  if (respLines.length) responsibilities = respLines.join("\n");
 
-  // Role summary: first short descriptive line not a label (after title)
   let roleSummary = extract([
     /^(?:summary[:\-\s*]*|role\s*summary[:\-\s*]*|about\s*(?:the\s*)?role[:\-\s*]*)(.+)$/i,
   ]);
   if (!roleSummary && responsibilities) {
-    // First sentence of responsibilities
     roleSummary = responsibilities.split(/[.\n]/)[0].trim().slice(0, 200);
   }
 
@@ -299,15 +313,7 @@ function buildShareMessage(job: Job): string {
         (job.responsibilities.length > 180 ? "…" : "")
       : "See full details on our website";
   const skills = job.requiredSkills ? `\n🛠 Skills: ${job.requiredSkills}` : "";
-
-  return `🚀 Hiring: ${job.title}
-📍 Location: ${location}
-💰 Compensation: ${rate}${skills}
-
-${summary}
-
-📩 Interested? Reach us at HireNest Workforce
-🌐 app.hirenestworkforce.com`;
+  return `🚀 Hiring: ${job.title}\n📍 Location: ${location}\n💰 Compensation: ${rate}${skills}\n\n${summary}\n\n📩 Interested? Reach us at HireNest Workforce\n🌐 app.hirenestworkforce.com`;
 }
 
 // ── WhatsApp SVG Icon ─────────────────────────────────────────────────────────
@@ -326,17 +332,1048 @@ function WhatsAppIcon({ className }: { className?: string }) {
   );
 }
 
+// ── Inline Toast ──────────────────────────────────────────────────────────────
+
+function InlineToast({
+  toast: t,
+  onDismiss,
+}: { toast: ToastState; onDismiss: () => void }) {
+  if (!t.visible) return null;
+  const bg =
+    t.type === "success"
+      ? "bg-emerald-600"
+      : t.type === "error"
+        ? "bg-rose-600"
+        : "bg-amber-500";
+  return (
+    <div
+      className={`fixed bottom-4 right-4 z-[200] flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium max-w-xs ${bg}`}
+    >
+      <span className="flex-1">{t.message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="shrink-0 opacity-80 hover:opacity-100"
+        aria-label="Dismiss"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function useInlineToast() {
+  const [toast, setToast] = useState<ToastState>({
+    message: "",
+    type: "success",
+    visible: false,
+  });
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback(
+    (message: string, type: ToastState["type"] = "success") => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setToast({ message, type, visible: true });
+      timerRef.current = setTimeout(
+        () => setToast((p) => ({ ...p, visible: false })),
+        4000,
+      );
+    },
+    [],
+  );
+
+  const dismissToast = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setToast((p) => ({ ...p, visible: false }));
+  }, []);
+
+  return { toast, showToast, dismissToast };
+}
+
+// ── Rejection Modal ───────────────────────────────────────────────────────────
+
+const REJECTION_REASONS = [
+  "Poor Fit",
+  "Rate Mismatch",
+  "Client Rejected",
+  "No Response",
+  "Position Filled",
+  "Other",
+];
+
+function RejectionModal({
+  open,
+  candidateName,
+  jobTitle,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  candidateName: string;
+  jobTitle: string;
+  onConfirm: (reason: string, notes: string) => void;
+  onCancel: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+
+  function handleConfirm() {
+    if (!reason) return;
+    onConfirm(reason, notes);
+    setReason("");
+    setNotes("");
+  }
+
+  if (!open) return null;
+
+  return (
+    <dialog
+      open
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent p-0 m-0 max-w-none w-full h-full"
+      aria-label="Confirm rejection"
+      data-ocid="rejection-modal"
+    >
+      <div
+        className="absolute inset-0 bg-foreground/30 backdrop-blur-sm"
+        aria-hidden="true"
+        onClick={onCancel}
+        onKeyDown={(e) => e.key === "Escape" && onCancel()}
+      />
+      <div className="relative z-10 w-full max-w-sm mx-4 bg-card border border-border rounded-lg shadow-elevated">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <h2 className="text-sm font-semibold text-card-foreground font-display">
+            Confirm Rejection
+          </h2>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            aria-label="Cancel"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Rejecting{" "}
+            <span className="font-semibold text-foreground">
+              {candidateName}
+            </span>{" "}
+            from{" "}
+            <span className="font-semibold text-foreground">{jobTitle}</span>.
+          </p>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Reason *</Label>
+            <Select value={reason} onValueChange={setReason}>
+              <SelectTrigger
+                className="h-8 text-xs"
+                data-ocid="rejection-reason-select"
+              >
+                <SelectValue placeholder="Select reason…" />
+              </SelectTrigger>
+              <SelectContent>
+                {REJECTION_REASONS.map((r) => (
+                  <SelectItem key={r} value={r} className="text-xs">
+                    {r}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Additional Notes (optional)</Label>
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Any additional context…"
+              className="text-xs min-h-[72px] resize-none"
+              data-ocid="rejection-notes"
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/20">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onCancel}
+            data-ocid="rejection-cancel"
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 text-xs gap-1 bg-rose-600 hover:bg-rose-700 text-white border-0"
+            onClick={handleConfirm}
+            disabled={!reason}
+            data-ocid="rejection-confirm"
+          >
+            Confirm Rejection
+          </Button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+// ── Submission Detail Slide-out Panel ─────────────────────────────────────────
+
+function SubmissionDetailPanel({
+  submission,
+  onClose,
+}: {
+  submission: Submission;
+  onClose: () => void;
+}) {
+  const stage = submission.pipelineStage;
+  const stageColor = stage ? getStageColor(stage) : "#6b7280";
+  const stageLabel = stage ? getStageLabel(stage) : "—";
+
+  return (
+    <div
+      className="fixed inset-y-0 right-0 z-50 flex flex-col w-full max-w-[400px] bg-card border-l border-border shadow-2xl"
+      data-ocid="submission-detail-panel"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card shrink-0">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-card-foreground font-display truncate">
+            {submission.candidateName ?? "—"}
+          </h3>
+          <p className="text-xs text-muted-foreground truncate">
+            {submission.jobTitle ?? "—"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="h-7 w-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 ml-2"
+          aria-label="Close panel"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* Stage badge */}
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold border"
+            style={{
+              borderColor: `${stageColor}40`,
+              backgroundColor: `${stageColor}18`,
+              color: stageColor,
+            }}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: stageColor }}
+            />
+            {stageLabel}
+          </span>
+          {submission.daysInStage > 0 && (
+            <span
+              className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border font-medium ${submission.daysInStage > 7 ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800" : "bg-muted text-muted-foreground border-border"}`}
+            >
+              <Clock className="h-3 w-3" />
+              {submission.daysInStage}d in stage
+            </span>
+          )}
+        </div>
+
+        {/* Info grid */}
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { label: "Client", value: submission.clientName },
+            { label: "Job", value: submission.jobTitle },
+          ].map(({ label, value }) => (
+            <div key={label}>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5">
+                {label}
+              </p>
+              <p className="text-xs text-card-foreground truncate">
+                {value ?? "—"}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {submission.rejectionReason && (
+          <div className="rounded-md border border-rose-200 bg-rose-50 dark:border-rose-800 dark:bg-rose-900/20 px-3 py-2">
+            <p className="text-[10px] font-semibold text-rose-700 dark:text-rose-400 uppercase tracking-wider mb-0.5">
+              Rejection Reason
+            </p>
+            <p className="text-xs text-rose-800 dark:text-rose-300">
+              {submission.rejectionReason}
+            </p>
+          </div>
+        )}
+
+        {/* Pipeline history */}
+        {submission.pipelineHistory &&
+          submission.pipelineHistory.length > 0 && (
+            <div>
+              <div className="flex items-center gap-1.5 mb-3">
+                <History className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Pipeline History
+                </p>
+              </div>
+              <div className="relative pl-4 space-y-3">
+                <div className="absolute left-1.5 top-0 bottom-0 w-px bg-border" />
+                {submission.pipelineHistory.map((h, idx) => {
+                  const toColor = getStageColor(h.toStage);
+                  return (
+                    <div
+                      key={h.id ?? idx}
+                      className="relative flex items-start gap-2.5"
+                    >
+                      <div
+                        className="absolute -left-2.5 top-1 w-2 h-2 rounded-full border-2 border-card"
+                        style={{ backgroundColor: toColor }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {h.fromStage && (
+                            <>
+                              <span className="text-[10px] text-muted-foreground">
+                                {getStageLabel(h.fromStage)}
+                              </span>
+                              <ChevronRight className="h-2.5 w-2.5 text-muted-foreground" />
+                            </>
+                          )}
+                          <span
+                            className="text-[10px] font-semibold"
+                            style={{ color: toColor }}
+                          >
+                            {getStageLabel(h.toStage)}
+                          </span>
+                        </div>
+                        {h.rejectionReason && (
+                          <p className="text-[10px] text-rose-600 dark:text-rose-400 mt-0.5">
+                            Reason: {h.rejectionReason}
+                          </p>
+                        )}
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          {h.changedAt
+                            ? new Date(h.changedAt).toLocaleDateString(
+                                "en-US",
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                },
+                              )
+                            : ""}
+                          {h.changedBy ? ` by ${h.changedBy}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+        {submission.notes && (
+          <div>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+              Notes
+            </p>
+            <p className="text-xs text-card-foreground leading-relaxed whitespace-pre-wrap">
+              {submission.notes}
+            </p>
+          </div>
+        )}
+
+        {/* Links */}
+        <div className="flex gap-2 pt-1">
+          {submission.candidateId && (
+            <Link
+              to="/candidates"
+              className="flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Candidate Profile
+            </Link>
+          )}
+          {submission.jobId && (
+            <Link
+              to="/jobs"
+              className="flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Job Detail
+            </Link>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Kanban Card ───────────────────────────────────────────────────────────────
+
+interface KanbanCardProps {
+  submission: Submission;
+  vendorName: string | undefined;
+  topSkills: string[];
+  onDragStart: (
+    e: React.DragEvent,
+    subId: string,
+    stage: SubmissionPipelineStage,
+  ) => void;
+  onStageChange: (sub: Submission, toStage: SubmissionPipelineStage) => void;
+  onClick: (sub: Submission) => void;
+}
+
+function KanbanCard({
+  submission,
+  vendorName,
+  topSkills,
+  onDragStart,
+  onStageChange,
+  onClick,
+}: KanbanCardProps) {
+  const stage = submission.pipelineStage;
+  const stageColor = stage ? getStageColor(stage) : "#6b7280";
+  const allowed = stage ? (ALLOWED_STAGE_TRANSITIONS[stage] ?? []) : [];
+  const daysInStage = submission.daysInStage ?? 0;
+
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        if (stage) onDragStart(e, submission.id, stage);
+      }}
+      aria-hidden="true"
+      className="bg-card border border-border rounded-md shadow-sm hover:shadow-md hover:border-primary/30 transition-all duration-150 select-none group"
+      style={{ borderLeftWidth: "3px", borderLeftColor: stageColor }}
+      data-ocid="kanban-card"
+    >
+      <button
+        type="button"
+        onClick={() => onClick(submission)}
+        className="w-full text-left p-2.5 cursor-pointer"
+        aria-label={`View ${submission.candidateName ?? "submission"} details`}
+      >
+        {/* Candidate name */}
+        <p className="text-xs font-semibold text-foreground truncate leading-tight mb-0.5">
+          {submission.candidateName ?? "—"}
+        </p>
+        {/* Job title */}
+        <p className="text-[10px] text-muted-foreground truncate mb-1">
+          {submission.jobTitle ?? "—"}
+        </p>
+
+        {/* Skills row */}
+        {topSkills.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {topSkills.map((skill) => (
+              <span
+                key={skill}
+                className="text-[9px] px-1 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-medium truncate max-w-[70px]"
+              >
+                {skill}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Bottom row */}
+        <div className="flex items-center justify-between gap-1 flex-wrap">
+          <div className="flex items-center gap-1 flex-wrap">
+            {daysInStage > 7 ? (
+              <span className="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700 font-medium">
+                <Clock className="h-2.5 w-2.5" />
+                {daysInStage}d
+              </span>
+            ) : daysInStage > 0 ? (
+              <span className="text-[9px] text-muted-foreground px-1.5 py-0.5 rounded-full bg-muted border border-border">
+                {daysInStage}d
+              </span>
+            ) : null}
+            {vendorName ? (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800 font-medium truncate max-w-[80px]">
+                {vendorName}
+              </span>
+            ) : submission.vendorId ? (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800 font-medium">
+                Vendor
+              </span>
+            ) : null}
+          </div>
+          {/* Quick stage change */}
+          {allowed.length > 0 && (
+            <select
+              value=""
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                e.stopPropagation();
+                const val = e.target.value as SubmissionPipelineStage;
+                if (val) onStageChange(submission, val);
+              }}
+              className="text-[9px] border border-border rounded bg-background text-foreground px-1 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring hover:border-primary/50 transition-colors"
+              aria-label={`Move ${submission.candidateName ?? ""}`}
+              data-ocid="kanban-card-stage-select"
+            >
+              <option value="">Move to…</option>
+              {allowed.map((s) => (
+                <option key={s} value={s}>
+                  {getStageLabel(s)}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </button>
+    </div>
+  );
+}
+
+// ── Kanban Column ─────────────────────────────────────────────────────────────
+
+interface KanbanColumnProps {
+  stage: SubmissionPipelineStage;
+  submissions: Submission[];
+  vendorMap: Map<string, string>;
+  resumeSkillsMap: Map<string, string[]>;
+  onDragStart: (
+    e: React.DragEvent,
+    subId: string,
+    fromStage: SubmissionPipelineStage,
+  ) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent, toStage: SubmissionPipelineStage) => void;
+  onStageChange: (sub: Submission, toStage: SubmissionPipelineStage) => void;
+  onCardClick: (sub: Submission) => void;
+  isDragOver: boolean;
+}
+
+function KanbanColumn({
+  stage,
+  submissions,
+  vendorMap,
+  resumeSkillsMap,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onStageChange,
+  onCardClick,
+  isDragOver,
+}: KanbanColumnProps) {
+  const color = getStageColor(stage);
+  const label = getStageLabel(stage);
+
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDrop={(e) => onDrop(e, stage)}
+      className={`flex flex-col rounded-lg border transition-colors duration-150 min-w-[200px] w-[200px] shrink-0 ${isDragOver ? "border-primary/60 bg-primary/5" : "border-border bg-muted/20"}`}
+      data-ocid={`kanban-col-${stage}`}
+    >
+      {/* Column header */}
+      <div className="flex items-center gap-2 px-2.5 py-2 border-b border-border">
+        <span
+          className="w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: color }}
+        />
+        <span className="text-[10px] font-semibold text-foreground uppercase tracking-wider truncate flex-1">
+          {label}
+        </span>
+        <span
+          className="text-[10px] font-bold px-1.5 py-0.5 rounded-sm"
+          style={{ backgroundColor: `${color}20`, color }}
+        >
+          {submissions.length}
+        </span>
+      </div>
+
+      {/* Cards */}
+      <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[120px]">
+        {submissions.length === 0 ? (
+          <div
+            className={`h-full min-h-[80px] flex items-center justify-center rounded border-2 border-dashed transition-colors ${isDragOver ? "border-primary/40 bg-primary/5" : "border-border/40"}`}
+          >
+            <span className="text-[10px] text-muted-foreground/50">
+              Drop here
+            </span>
+          </div>
+        ) : (
+          submissions.map((sub) => (
+            <KanbanCard
+              key={sub.id}
+              submission={sub}
+              vendorName={
+                sub.vendorId ? vendorMap.get(sub.vendorId) : undefined
+              }
+              topSkills={
+                sub.resumeId ? (resumeSkillsMap.get(sub.resumeId) ?? []) : []
+              }
+              onDragStart={onDragStart}
+              onStageChange={onStageChange}
+              onClick={onCardClick}
+            />
+          ))
+        )}
+        {submissions.length > 0 && isDragOver && (
+          <div className="h-8 rounded border-2 border-dashed border-primary/40 bg-primary/5 flex items-center justify-center">
+            <span className="text-[9px] text-primary">Drop here</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Stats Bar ─────────────────────────────────────────────────────────────────
+
+function KanbanStatsBar({ submissions }: { submissions: Submission[] }) {
+  const counts = STAGE_ORDER.reduce<Record<SubmissionPipelineStage, number>>(
+    (acc, s) => {
+      acc[s] = 0;
+      return acc;
+    },
+    {} as Record<SubmissionPipelineStage, number>,
+  );
+
+  for (const sub of submissions) {
+    if (sub.pipelineStage && sub.pipelineStage in counts) {
+      counts[sub.pipelineStage]++;
+    }
+  }
+
+  const totalSubmissions = submissions.length;
+
+  return (
+    <div
+      className="flex items-center gap-1.5 flex-wrap px-4 py-2 bg-card border-b border-border overflow-x-auto"
+      data-ocid="kanban-stats-bar"
+    >
+      {totalSubmissions === 0 && (
+        <span className="text-[10px] text-muted-foreground italic mr-2">
+          No submissions yet — submit resumes to jobs to populate the pipeline
+        </span>
+      )}
+      {STAGE_ORDER.map((s) => {
+        const color = getStageColor(s);
+        const count = counts[s];
+        return (
+          <div
+            key={s}
+            className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-medium shrink-0 transition-opacity ${count === 0 && totalSubmissions > 0 ? "opacity-40" : ""}`}
+            style={{
+              borderColor: `${color}30`,
+              backgroundColor: `${color}10`,
+              color,
+            }}
+            title={
+              count === 0
+                ? `No submissions in ${PIPELINE_STAGE_LABELS[s]}`
+                : undefined
+            }
+          >
+            <span>{PIPELINE_STAGE_LABELS[s]?.split(" ")[0]}</span>
+            <span className="font-bold">{count}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Kanban Board ──────────────────────────────────────────────────────────────
+
+interface KanbanBoardProps {
+  submissions: Submission[];
+  jobId: string | null;
+  vendorMap: Map<string, string>;
+  resumeSkillsMap: Map<string, string[]>;
+  onSubUpdate: (
+    sub: Submission,
+    stage: SubmissionPipelineStage,
+    reason?: string,
+    notes?: string,
+  ) => void;
+  showToast: (msg: string, type: ToastState["type"]) => void;
+}
+
+function KanbanBoard({
+  submissions,
+  jobId,
+  vendorMap,
+  resumeSkillsMap,
+  onSubUpdate,
+  showToast,
+}: KanbanBoardProps) {
+  const [draggedSubId, setDraggedSubId] = useState<string | null>(null);
+  const [draggedFromStage, setDraggedFromStage] =
+    useState<SubmissionPipelineStage | null>(null);
+  const [dragOverStage, setDragOverStage] =
+    useState<SubmissionPipelineStage | null>(null);
+  const [pendingRejection, setPendingRejection] = useState<{
+    sub: Submission;
+    toStage: SubmissionPipelineStage;
+  } | null>(null);
+  const [selectedSub, setSelectedSub] = useState<Submission | null>(null);
+
+  const filtered = jobId
+    ? submissions.filter((s) => s.jobId === jobId)
+    : submissions;
+
+  const byStage = STAGE_ORDER.reduce<
+    Record<SubmissionPipelineStage, Submission[]>
+  >(
+    (acc, s) => {
+      acc[s] = [];
+      return acc;
+    },
+    {} as Record<SubmissionPipelineStage, Submission[]>,
+  );
+
+  for (const sub of filtered) {
+    const s = sub.pipelineStage;
+    if (s && s in byStage) byStage[s].push(sub);
+  }
+
+  function handleDragStart(
+    e: React.DragEvent,
+    subId: string,
+    fromStage: SubmissionPipelineStage,
+  ) {
+    setDraggedSubId(subId);
+    setDraggedFromStage(fromStage);
+    e.dataTransfer.effectAllowed = "move";
+  }
+
+  function handleDragOver(
+    e: React.DragEvent,
+    toStage: SubmissionPipelineStage,
+  ) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverStage(toStage);
+  }
+
+  function handleDrop(e: React.DragEvent, toStage: SubmissionPipelineStage) {
+    e.preventDefault();
+    setDragOverStage(null);
+
+    if (!draggedSubId || !draggedFromStage || draggedFromStage === toStage) {
+      setDraggedSubId(null);
+      setDraggedFromStage(null);
+      return;
+    }
+
+    if (!isValidTransition(draggedFromStage, toStage)) {
+      showToast(
+        `Cannot move from "${getStageLabel(draggedFromStage)}" to "${getStageLabel(toStage)}"`,
+        "error",
+      );
+      setDraggedSubId(null);
+      setDraggedFromStage(null);
+      return;
+    }
+
+    const sub = filtered.find((s) => s.id === draggedSubId);
+    if (!sub) {
+      setDraggedSubId(null);
+      setDraggedFromStage(null);
+      return;
+    }
+
+    setDraggedSubId(null);
+    setDraggedFromStage(null);
+
+    if (toStage === "rejected") {
+      setPendingRejection({ sub, toStage });
+    } else {
+      onSubUpdate(sub, toStage);
+    }
+  }
+
+  function handleStageChangeFromCard(
+    sub: Submission,
+    toStage: SubmissionPipelineStage,
+  ) {
+    const fromStage = sub.pipelineStage;
+    if (!fromStage) return;
+
+    if (!isValidTransition(fromStage, toStage)) {
+      showToast(
+        `Cannot move from "${getStageLabel(fromStage)}" to "${getStageLabel(toStage)}"`,
+        "error",
+      );
+      return;
+    }
+
+    if (toStage === "rejected") {
+      setPendingRejection({ sub, toStage });
+    } else {
+      onSubUpdate(sub, toStage);
+    }
+  }
+
+  function handleRejectionConfirm(reason: string, notes: string) {
+    if (!pendingRejection) return;
+    onSubUpdate(pendingRejection.sub, pendingRejection.toStage, reason, notes);
+    setPendingRejection(null);
+  }
+
+  return (
+    <>
+      <KanbanStatsBar submissions={filtered} />
+      <div className="flex-1 overflow-x-auto overflow-y-hidden">
+        <div
+          className="flex gap-3 p-4 h-full min-h-[400px]"
+          style={{ minWidth: "max-content" }}
+        >
+          {STAGE_ORDER.map((stage) => (
+            <KanbanColumn
+              key={stage}
+              stage={stage}
+              submissions={byStage[stage]}
+              vendorMap={vendorMap}
+              resumeSkillsMap={resumeSkillsMap}
+              onDragStart={handleDragStart}
+              onDragOver={(e) => handleDragOver(e, stage)}
+              onDrop={handleDrop}
+              onStageChange={handleStageChangeFromCard}
+              onCardClick={setSelectedSub}
+              isDragOver={dragOverStage === stage}
+            />
+          ))}
+        </div>
+      </div>
+
+      <RejectionModal
+        open={!!pendingRejection}
+        candidateName={pendingRejection?.sub.candidateName ?? "Candidate"}
+        jobTitle={pendingRejection?.sub.jobTitle ?? "this job"}
+        onConfirm={handleRejectionConfirm}
+        onCancel={() => setPendingRejection(null)}
+      />
+
+      {selectedSub && (
+        <SubmissionDetailPanel
+          submission={selectedSub}
+          onClose={() => setSelectedSub(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// ── List View (mobile default) ────────────────────────────────────────────────
+
+interface SubmissionListViewProps {
+  submissions: Submission[];
+  jobId: string | null;
+  vendorMap: Map<string, string>;
+  onSubUpdate: (
+    sub: Submission,
+    stage: SubmissionPipelineStage,
+    reason?: string,
+    notes?: string,
+  ) => void;
+  showToast: (msg: string, type: ToastState["type"]) => void;
+}
+
+function SubmissionListView({
+  submissions,
+  jobId,
+  vendorMap,
+  onSubUpdate,
+  showToast,
+}: SubmissionListViewProps) {
+  const [search, setSearch] = useState("");
+  const [pendingRejection, setPendingRejection] = useState<{
+    sub: Submission;
+    toStage: SubmissionPipelineStage;
+  } | null>(null);
+  const [selectedSub, setSelectedSub] = useState<Submission | null>(null);
+
+  const filtered = (
+    jobId ? submissions.filter((s) => s.jobId === jobId) : submissions
+  ).filter((s) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      (s.candidateName ?? "").toLowerCase().includes(q) ||
+      (s.jobTitle ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  function handleStageChange(
+    sub: Submission,
+    toStage: SubmissionPipelineStage,
+  ) {
+    const fromStage = sub.pipelineStage;
+    if (!fromStage) return;
+
+    if (!isValidTransition(fromStage, toStage)) {
+      showToast(
+        `Cannot move from "${getStageLabel(fromStage)}" to "${getStageLabel(toStage)}"`,
+        "error",
+      );
+      return;
+    }
+
+    if (toStage === "rejected") {
+      setPendingRejection({ sub, toStage });
+    } else {
+      onSubUpdate(sub, toStage);
+    }
+  }
+
+  return (
+    <>
+      <div className="p-3 border-b border-border bg-background">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by candidate or job title…"
+          className="h-8 text-xs max-w-sm"
+          data-ocid="submission-list-search"
+        />
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <div className="flex items-center justify-center h-48 text-sm text-muted-foreground">
+            {search
+              ? "No matching submissions found."
+              : "No submissions yet for this view."}
+          </div>
+        ) : (
+          <div>
+            <div className="grid grid-cols-[1fr_1fr_90px_160px_60px_100px] gap-2 px-3 py-1.5 bg-muted/20 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0 z-10">
+              <span>Candidate</span>
+              <span>Job</span>
+              <span>Vendor</span>
+              <span>Stage</span>
+              <span>Days</span>
+              <span>Actions</span>
+            </div>
+            {filtered.map((sub) => {
+              const stage = sub.pipelineStage;
+              const color = stage ? getStageColor(stage) : "#6b7280";
+              const label = stage ? getStageLabel(stage) : "—";
+              const allowed = stage
+                ? (ALLOWED_STAGE_TRANSITIONS[stage] ?? [])
+                : [];
+              const vendorName = sub.vendorId
+                ? vendorMap.get(sub.vendorId)
+                : undefined;
+
+              return (
+                <div
+                  key={sub.id}
+                  className="grid grid-cols-[1fr_1fr_90px_160px_60px_100px] gap-2 px-3 py-2.5 border-b border-border/50 hover:bg-muted/20 transition-colors duration-150 items-center"
+                  data-ocid="submission-list-row"
+                >
+                  <span className="text-xs font-medium text-foreground truncate min-w-0">
+                    {sub.candidateName ?? "—"}
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate min-w-0">
+                    {sub.jobTitle ?? "—"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground truncate min-w-0">
+                    {vendorName ?? (sub.vendorId ? "Vendor" : "—")}
+                  </span>
+                  <div>
+                    <span
+                      className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md border font-medium"
+                      style={{
+                        borderColor: `${color}40`,
+                        backgroundColor: `${color}15`,
+                        color,
+                      }}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: color }}
+                      />
+                      {label}
+                    </span>
+                  </div>
+                  <span
+                    className={`text-[10px] font-medium text-center ${sub.daysInStage > 7 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}
+                  >
+                    {sub.daysInStage > 0 ? `${sub.daysInStage}d` : "—"}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {allowed.length > 0 && (
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const val = e.target.value as SubmissionPipelineStage;
+                          if (val) handleStageChange(sub, val);
+                        }}
+                        className="text-[10px] border border-border rounded bg-background text-foreground px-1.5 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring"
+                        aria-label={`Move ${sub.candidateName ?? ""}`}
+                        data-ocid="list-stage-select"
+                      >
+                        <option value="">Move…</option>
+                        {allowed.map((s) => (
+                          <option key={s} value={s}>
+                            {getStageLabel(s)}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSub(sub)}
+                      className="text-[10px] px-2 py-0.5 border border-border rounded bg-background hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                      data-ocid="list-view-details"
+                    >
+                      View
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <RejectionModal
+        open={!!pendingRejection}
+        candidateName={pendingRejection?.sub.candidateName ?? "Candidate"}
+        jobTitle={pendingRejection?.sub.jobTitle ?? "this job"}
+        onConfirm={(reason, notes) => {
+          if (!pendingRejection) return;
+          onSubUpdate(
+            pendingRejection.sub,
+            pendingRejection.toStage,
+            reason,
+            notes,
+          );
+          setPendingRejection(null);
+        }}
+        onCancel={() => setPendingRejection(null)}
+      />
+
+      {selectedSub && (
+        <SubmissionDetailPanel
+          submission={selectedSub}
+          onClose={() => setSelectedSub(null)}
+        />
+      )}
+    </>
+  );
+}
+
 // ── WhatsApp Job Import Modal ─────────────────────────────────────────────────
 
 function WhatsAppJobImportModal({
   open,
   onClose,
   clients,
-}: {
-  open: boolean;
-  onClose: () => void;
-  clients: Client[];
-}) {
+}: { open: boolean; onClose: () => void; clients: Client[] }) {
   const [step, setStep] = useState<1 | 2>(1);
   const [rawText, setRawText] = useState("");
   const [parsed, setParsed] = useState<ParsedJobFields | null>(null);
@@ -368,8 +1405,6 @@ function WhatsAppJobImportModal({
     }
     const fields = parseJobRequirementText(rawText);
     setParsed(fields);
-
-    // Fuzzy client match — case-insensitive substring
     let found: Client | null = null;
     if (fields.companyName) {
       const needle = fields.companyName.toLowerCase();
@@ -383,10 +1418,8 @@ function WhatsAppJobImportModal({
               needle.includes(c.company.toLowerCase())),
         ) ?? null;
     }
-
     setMatchedClient(found);
     setIsNewClient(!found && !!fields.companyName);
-
     setForm({
       clientId: found?.id ?? "",
       title: fields.title,
@@ -400,7 +1433,6 @@ function WhatsAppJobImportModal({
       rateCurrency: fields.rateCurrency,
       _companyName: fields.companyName,
     });
-
     setStep(2);
   }
 
@@ -420,12 +1452,9 @@ function WhatsAppJobImportModal({
       toast.error("Please select a rate structure.");
       return;
     }
-
     setIsSaving(true);
     try {
       let clientId = form.clientId;
-
-      // Auto-create client if new
       if (isNewClient && form._companyName) {
         const newClient = await createClient.mutateAsync({
           name: form._companyName,
@@ -434,28 +1463,23 @@ function WhatsAppJobImportModal({
         });
         clientId = newClient.id;
       }
-
       if (!clientId) {
         toast.error("Please select or ensure a client is linked.");
         setIsSaving(false);
         return;
       }
-
       const { _companyName: _ignored, ...jobInput } = form;
       await createJob.mutateAsync({ ...jobInput, clientId });
-
       qc.invalidateQueries({ queryKey: ["clients"] });
       qc.invalidateQueries({ queryKey: ["jobs"] });
-
       toast.success(
         isNewClient
           ? `Job created and new client "${form._companyName}" added`
           : "Job created successfully",
       );
-
       handleClose();
     } catch {
-      // errors are shown by the hooks themselves
+      /* errors shown by hooks */
     } finally {
       setIsSaving(false);
     }
@@ -463,7 +1487,6 @@ function WhatsAppJobImportModal({
 
   function handleClose() {
     onClose();
-    // Reset after animation
     setTimeout(() => {
       setStep(1);
       setRawText("");
@@ -482,17 +1505,13 @@ function WhatsAppJobImportModal({
       aria-label="Import job from WhatsApp"
       data-ocid="whatsapp-import-modal"
     >
-      {/* Backdrop */}
       <div
         className="absolute inset-0 bg-foreground/30 backdrop-blur-sm cursor-default"
         aria-hidden="true"
         onClick={handleClose}
         onKeyDown={(e) => e.key === "Escape" && handleClose()}
       />
-
-      {/* Modal */}
       <div className="relative z-10 w-full max-w-xl mx-4 bg-card border border-border rounded-lg shadow-elevated flex flex-col max-h-[90vh]">
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <div className="flex items-center gap-2">
             <div className="flex items-center justify-center w-7 h-7 rounded-md bg-emerald-500/10 border border-emerald-500/20">
@@ -513,15 +1532,13 @@ function WhatsAppJobImportModal({
           <button
             type="button"
             onClick={handleClose}
-            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors duration-150"
+            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             aria-label="Close modal"
             data-ocid="wa-import-close"
           >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-
-        {/* Step indicator */}
         <div className="flex gap-0 px-4 pt-3 pb-0 shrink-0">
           {[1, 2].map((s) => (
             <div key={s} className="flex items-center gap-1.5 mr-4">
@@ -545,20 +1562,15 @@ function WhatsAppJobImportModal({
             </div>
           ))}
         </div>
-
-        {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {step === 1 ? (
             <>
               <div className="rounded-md border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/20 px-3 py-2.5">
                 <p className="text-xs text-emerald-800 dark:text-emerald-300 leading-relaxed">
                   <span className="font-semibold">How it works:</span> Paste the
-                  job requirement message you received on WhatsApp. The parser
-                  will extract title, company, skills, experience, rate (LPM /
-                  LPA / Per Hour), location, and responsibilities automatically.
+                  job requirement message you received on WhatsApp.
                 </p>
               </div>
-
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">
                   WhatsApp Message Text
@@ -573,15 +1585,10 @@ function WhatsAppJobImportModal({
                   data-ocid="wa-import-textarea"
                   autoFocus
                 />
-                <p className="text-[10px] text-muted-foreground">
-                  Supports structured and conversational formats. Only company
-                  name and title are needed for auto-detection.
-                </p>
               </div>
             </>
           ) : (
             <>
-              {/* Client badge */}
               <div className="flex items-center gap-2">
                 {isNewClient ? (
                   <div
@@ -631,8 +1638,6 @@ function WhatsAppJobImportModal({
                   </div>
                 )}
               </div>
-
-              {/* Parsed fields — editable */}
               <div className="space-y-3">
                 <div className="space-y-1">
                   <Label className="text-xs">Job Title *</Label>
@@ -645,7 +1650,6 @@ function WhatsAppJobImportModal({
                     data-ocid="wa-form-title"
                   />
                 </div>
-
                 <div className="space-y-1">
                   <Label className="text-xs">Role Summary</Label>
                   <Input
@@ -657,7 +1661,6 @@ function WhatsAppJobImportModal({
                     data-ocid="wa-form-role-summary"
                   />
                 </div>
-
                 <div className="space-y-1">
                   <Label className="text-xs">Responsibilities</Label>
                   <Textarea
@@ -669,7 +1672,6 @@ function WhatsAppJobImportModal({
                     data-ocid="wa-form-responsibilities"
                   />
                 </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-xs">Required Skills</Label>
@@ -694,7 +1696,6 @@ function WhatsAppJobImportModal({
                     />
                   </div>
                 </div>
-
                 <div className="space-y-1">
                   <Label className="text-xs">Location</Label>
                   <Input
@@ -706,8 +1707,6 @@ function WhatsAppJobImportModal({
                     data-ocid="wa-form-location"
                   />
                 </div>
-
-                {/* Rate Structure */}
                 <RateStructure
                   rateType={form.rateType as RateType | ""}
                   rateAmount={form.rateAmount ?? ""}
@@ -723,21 +1722,17 @@ function WhatsAppJobImportModal({
                   }
                 />
               </div>
-
-              {/* Parsed source hint */}
               {parsed && (
                 <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground">
                   <span className="font-semibold text-foreground">
                     Parsed from text.
                   </span>{" "}
-                  All fields are editable. Unrecognised fields were left blank.
+                  All fields are editable.
                 </div>
               )}
             </>
           )}
         </div>
-
-        {/* Footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/20 shrink-0">
           {step === 2 ? (
             <Button
@@ -753,7 +1748,6 @@ function WhatsAppJobImportModal({
           ) : (
             <span />
           )}
-
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -765,7 +1759,6 @@ function WhatsAppJobImportModal({
             >
               Cancel
             </Button>
-
             {step === 1 ? (
               <Button
                 size="sm"
@@ -788,7 +1781,7 @@ function WhatsAppJobImportModal({
                 {isSaving ? (
                   <>
                     <RefreshCw className="h-3 w-3 animate-spin" />
-                    {isNewClient ? "Creating client & job…" : "Saving job…"}
+                    {isNewClient ? "Creating…" : "Saving…"}
                   </>
                 ) : (
                   <>
@@ -811,11 +1804,7 @@ function ShareJobModal({
   job,
   open,
   onClose,
-}: {
-  job: Job;
-  open: boolean;
-  onClose: () => void;
-}) {
+}: { job: Job; open: boolean; onClose: () => void }) {
   const message = buildShareMessage(job);
   const jobsUrl = "https://app.hirenestworkforce.com/jobs";
   const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
@@ -839,17 +1828,13 @@ function ShareJobModal({
       aria-label="Share Job Opening"
       data-ocid="share-job-modal"
     >
-      {/* Backdrop */}
       <div
         className="absolute inset-0 bg-foreground/30 backdrop-blur-sm cursor-default"
         aria-hidden="true"
         onClick={onClose}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       />
-
-      {/* Modal */}
       <div className="relative z-10 w-full max-w-md mx-4 bg-card border border-border rounded-lg shadow-elevated">
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <Share2 className="h-4 w-4 text-primary" />
@@ -860,28 +1845,25 @@ function ShareJobModal({
           <button
             type="button"
             onClick={onClose}
-            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors duration-150"
+            className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/50"
             aria-label="Close modal"
             data-ocid="share-modal-close"
           >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-
-        {/* Body */}
         <div className="p-4 space-y-4">
-          {/* Job preview card */}
           <div
-            className="rounded-md border border-border bg-slate-50 dark:bg-slate-800 p-3 space-y-2"
+            className="rounded-md border border-border bg-muted/30 p-3 space-y-2"
             data-ocid="share-preview-card"
           >
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 font-display">
+                <p className="text-sm font-semibold text-card-foreground font-display">
                   {job.title}
                 </p>
                 {job.location && (
-                  <p className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1 mt-0.5">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                     <MapPin className="h-3 w-3" />
                     {job.location}
                   </p>
@@ -891,12 +1873,12 @@ function ShareJobModal({
                 {getStatusLabel(job.status)}
               </Badge>
             </div>
-            <div className="flex items-center gap-1 text-xs text-slate-800 dark:text-slate-200 font-medium">
+            <div className="flex items-center gap-1 text-xs text-foreground font-medium">
               <IndianRupee className="h-3 w-3 text-primary" />
               {formatRateDisplay(job)}
             </div>
             {job.roleSummary && (
-              <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed line-clamp-2">
+              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
                 {job.roleSummary}
               </p>
             )}
@@ -916,8 +1898,6 @@ function ShareJobModal({
               </div>
             )}
           </div>
-
-          {/* Message preview */}
           <div>
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
               Message Preview
@@ -929,8 +1909,6 @@ function ShareJobModal({
               {message}
             </div>
           </div>
-
-          {/* Share buttons */}
           <div className="space-y-2">
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
               Share Via
@@ -940,32 +1918,30 @@ function ShareJobModal({
                 href={whatsappUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors duration-150 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400"
                 data-ocid="share-whatsapp-btn"
                 aria-label="Share on WhatsApp"
               >
                 <WhatsAppIcon className="h-5 w-5" />
                 <span className="text-[10px] font-semibold">WhatsApp</span>
               </a>
-
               <a
                 href={linkedinUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors duration-150 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
+                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400"
                 data-ocid="share-linkedin-btn"
                 aria-label="Share on LinkedIn"
               >
                 <Linkedin className="h-5 w-5" />
                 <span className="text-[10px] font-semibold">LinkedIn</span>
               </a>
-
               <button
                 type="button"
                 onClick={handleCopy}
-                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-secondary border border-border text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors duration-150"
+                className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-md bg-secondary border border-border text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
                 data-ocid="share-copy-btn"
-                aria-label="Copy message to clipboard"
+                aria-label="Copy message"
               >
                 <Copy className="h-5 w-5" />
                 <span className="text-[10px] font-semibold">Copy</span>
@@ -975,137 +1951,6 @@ function ShareJobModal({
         </div>
       </div>
     </dialog>
-  );
-}
-
-// ── Pipeline Stage Colors ─────────────────────────────────────────────────────
-
-const STAGE_COLOR_MAP: Record<string, string> = {
-  "Resume Sent":
-    "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800",
-  "Screening Round":
-    "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
-  Selected:
-    "bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800",
-  "Client Round":
-    "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800",
-  "Final Onboarding":
-    "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800",
-};
-
-// ── Candidate Pipeline Panel ──────────────────────────────────────────────────
-
-function CandidatePipelinePanel({ job }: { job: Job }) {
-  const { data: submissions = [], isLoading } = useSubmissionsForJob(job.id);
-  const updateSubmission = useUpdateSubmission();
-
-  function handleStageChange(submissionId: string, newStage: string) {
-    updateSubmission.mutate(
-      { id: submissionId, patch: { pipeline_stage: newStage } },
-      {
-        onSuccess: () => toast.success(`Stage updated to "${newStage}"`),
-        onError: () => toast.error("Failed to update stage"),
-      },
-    );
-  }
-
-  const currentStage = (sub: { pipelineStage?: string }) =>
-    sub.pipelineStage ?? "";
-
-  return (
-    <div
-      className="border-t border-border mt-4 pt-4"
-      data-ocid="candidate-pipeline-panel"
-    >
-      <div className="flex items-center gap-2 mb-3">
-        <Users className="h-3.5 w-3.5 text-primary" />
-        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
-          Candidate Pipeline
-        </h4>
-        {!isLoading && (
-          <Badge variant="outline" className="h-4 text-[10px] px-1.5">
-            {submissions.length}{" "}
-            {submissions.length === 1 ? "profile" : "profiles"} shared
-          </Badge>
-        )}
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-1.5">
-          {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-9 w-full rounded" />
-          ))}
-        </div>
-      ) : submissions.length === 0 ? (
-        <div
-          className="rounded-md border border-border bg-muted/20 px-3 py-4 text-center"
-          data-ocid="pipeline-empty"
-        >
-          <p className="text-xs text-muted-foreground">
-            0 profiles shared for this role
-          </p>
-        </div>
-      ) : (
-        <div className="rounded-md border border-border overflow-hidden">
-          <div className="grid grid-cols-[1fr_160px_80px] gap-2 px-3 py-1.5 bg-muted/30 border-b border-border">
-            {["Candidate", "Pipeline Stage", "Date"].map((h) => (
-              <span
-                key={h}
-                className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider"
-              >
-                {h}
-              </span>
-            ))}
-          </div>
-          {submissions.map((sub) => {
-            const stageValue = currentStage(sub);
-            const stageColorClass =
-              STAGE_COLOR_MAP[stageValue] ??
-              "bg-muted text-muted-foreground border-border";
-            return (
-              <div
-                key={sub.id}
-                className="grid grid-cols-[1fr_160px_80px] gap-2 px-3 py-2 border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors duration-150 items-center"
-                data-ocid="pipeline-row"
-              >
-                <span className="text-xs font-medium text-foreground truncate">
-                  {sub.candidateName || "—"}
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <select
-                    value={stageValue}
-                    onChange={(e) => handleStageChange(sub.id, e.target.value)}
-                    className="w-full h-6 text-[10px] bg-background border border-input rounded px-1.5 text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    data-ocid="pipeline-stage-select"
-                    aria-label={`Pipeline stage for ${sub.candidateName}`}
-                  >
-                    <option value="">Select stage…</option>
-                    {PIPELINE_STAGES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                  {stageValue && (
-                    <span
-                      className={`hidden sm:inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] font-medium shrink-0 ${stageColorClass}`}
-                    >
-                      ✓
-                    </span>
-                  )}
-                </div>
-                <span className="text-[10px] text-muted-foreground">
-                  {new Date(sub.submittedAt).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -1119,7 +1964,6 @@ function BenchMatchesPanel({ job }: { job: Job }) {
     refetch,
     isFetching,
   } = useMatchBench(job.id);
-
   const isLoading = matchLoading || benchLoading;
 
   return (
@@ -1153,7 +1997,6 @@ function BenchMatchesPanel({ job }: { job: Job }) {
           />
         </Button>
       </div>
-
       {isLoading ? (
         <div className="space-y-1.5">
           {[1, 2, 3].map((i) => (
@@ -1201,36 +2044,35 @@ function BenchMatchesPanel({ job }: { job: Job }) {
               ),
             )}
           </div>
-          {matches.map((m: BenchMatch) => (
-            <BenchMatchRow key={m.id} match={m} />
-          ))}
+          {matches.map((m: BenchMatch) => {
+            const pct = Math.round(m.matchScore * 100);
+            return (
+              <div
+                key={m.id}
+                className="grid grid-cols-[56px_1fr_100px_100px_1fr_70px] gap-2 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-muted/20 text-xs items-center"
+                data-ocid="bench-match-row"
+              >
+                <span
+                  className={`inline-flex items-center justify-center rounded border px-1.5 py-0.5 text-[10px] font-bold ${getMatchColor(m.matchScore)}`}
+                >
+                  {pct}%
+                </span>
+                <span className="font-medium text-foreground truncate">
+                  {m.candidateName}
+                </span>
+                <span className="text-muted-foreground truncate">
+                  {m.vendorName}
+                </span>
+                <span className="text-muted-foreground truncate">{m.role}</span>
+                <span className="text-muted-foreground truncate">
+                  {m.skill}
+                </span>
+                <span className="text-muted-foreground">₹{m.rate}/hr</span>
+              </div>
+            );
+          })}
         </div>
       )}
-    </div>
-  );
-}
-
-function BenchMatchRow({ match }: { match: BenchMatch }) {
-  const pct = Math.round(match.matchScore * 100);
-  const colorClass = getMatchColor(match.matchScore);
-
-  return (
-    <div
-      className="grid grid-cols-[56px_1fr_100px_100px_1fr_70px] gap-2 px-3 py-2 border-b border-border/50 last:border-b-0 hover:bg-muted/20 transition-colors duration-150 text-xs items-center"
-      data-ocid="bench-match-row"
-    >
-      <span
-        className={`inline-flex items-center justify-center rounded border px-1.5 py-0.5 text-[10px] font-bold ${colorClass}`}
-      >
-        {pct}%
-      </span>
-      <span className="font-medium text-foreground truncate">
-        {match.candidateName}
-      </span>
-      <span className="text-muted-foreground truncate">{match.vendorName}</span>
-      <span className="text-muted-foreground truncate">{match.role}</span>
-      <span className="text-muted-foreground truncate">{match.skill}</span>
-      <span className="text-muted-foreground">₹{match.rate}/hr</span>
     </div>
   );
 }
@@ -1250,7 +2092,6 @@ function JobDetailPanel({
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   const updateJobStatus = useUpdateJobStatus();
-
   const clientName =
     job.clientName ||
     clients.find((c) => c.id === job.clientId)?.name ||
@@ -1274,7 +2115,6 @@ function JobDetailPanel({
         className="flex flex-col h-full overflow-hidden bg-card border-l border-border w-full max-w-[480px]"
         data-ocid="job-detail-panel"
       >
-        {/* Panel header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-card-foreground font-display truncate">
@@ -1310,7 +2150,6 @@ function JobDetailPanel({
               onClick={handleToggleStatus}
               disabled={updateJobStatus.isPending}
               data-ocid="job-toggle-status-btn"
-              aria-label={job.status === "closed" ? "Reopen job" : "Close job"}
             >
               {job.status === "closed" ? "Reopen" : "Close"}
             </Button>
@@ -1325,10 +2164,7 @@ function JobDetailPanel({
             </Button>
           </div>
         </div>
-
-        {/* Panel body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* Meta row */}
           <div className="flex flex-wrap gap-2 text-xs">
             <Badge
               variant={getStatusVariant(job.status)}
@@ -1347,8 +2183,6 @@ function JobDetailPanel({
               {formatRateDisplay(job)}
             </span>
           </div>
-
-          {/* Client + Date */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
@@ -1365,8 +2199,6 @@ function JobDetailPanel({
               </p>
             </div>
           </div>
-
-          {/* Role Summary */}
           {job.roleSummary && (
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
@@ -1377,8 +2209,6 @@ function JobDetailPanel({
               </p>
             </div>
           )}
-
-          {/* Responsibilities */}
           {job.responsibilities && (
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
@@ -1389,8 +2219,6 @@ function JobDetailPanel({
               </p>
             </div>
           )}
-
-          {/* Legacy requirements */}
           {!job.responsibilities && job.requirements && (
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
@@ -1401,8 +2229,6 @@ function JobDetailPanel({
               </p>
             </div>
           )}
-
-          {/* Required Skills */}
           {job.requiredSkills && (
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
@@ -1420,8 +2246,6 @@ function JobDetailPanel({
               </div>
             </div>
           )}
-
-          {/* Experience */}
           {job.experience && (
             <div>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
@@ -1430,15 +2254,9 @@ function JobDetailPanel({
               <p className="text-xs text-card-foreground">{job.experience}</p>
             </div>
           )}
-
-          {/* Candidate Pipeline */}
-          <CandidatePipelinePanel job={job} />
-
-          {/* Bench Matches */}
           <BenchMatchesPanel job={job} />
         </div>
       </div>
-
       <ShareJobModal
         job={job}
         open={shareOpen}
@@ -1448,14 +2266,13 @@ function JobDetailPanel({
   );
 }
 
-// ── Rate Structure Component ──────────────────────────────────────────────────
+// ── Rate Structure ────────────────────────────────────────────────────────────
 
 const RATE_TYPES: { value: RateType; label: string; description: string }[] = [
   { value: "LPM", label: "LPM", description: "Lakh Per Month" },
   { value: "LPA", label: "LPA", description: "Lakh Per Annum" },
   { value: "PerHour", label: "Per Hour", description: "Hourly rate" },
 ];
-
 const CURRENCIES = ["INR", "USD", "EUR", "GBP"];
 
 interface RateStructureProps {
@@ -1489,7 +2306,7 @@ function RateStructure({
             <label
               key={value}
               className={[
-                "flex items-center gap-3 p-2.5 rounded-md border cursor-pointer transition-colors duration-150",
+                "flex items-center gap-3 p-2.5 rounded-md border cursor-pointer transition-colors",
                 rateType === value
                   ? "bg-primary/10 border-primary/40 text-primary"
                   : "bg-background border-border hover:border-border/80 hover:bg-muted/40 text-foreground",
@@ -1526,13 +2343,11 @@ function RateStructure({
           ))}
         </div>
       </div>
-
       {rateType && (
         <div className="flex gap-2 items-end">
           <div className="flex-1 space-y-1">
             <Label className="text-xs">
-              Amount
-              {rateType === "LPM" && " (in Lakhs)"}
+              Amount{rateType === "LPM" && " (in Lakhs)"}
               {rateType === "LPA" && " (in Lakhs)"}
             </Label>
             <Input
@@ -1566,7 +2381,6 @@ function RateStructure({
           </div>
         </div>
       )}
-
       {rateType && rateAmount && (
         <p className="text-[10px] text-muted-foreground">
           {rateType === "LPM" &&
@@ -1630,7 +2444,6 @@ function JobForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" data-ocid="job-form">
-      {/* 1. Job Title */}
       <div className="space-y-1">
         <Label className="text-xs">Job Title *</Label>
         <Input
@@ -1643,8 +2456,6 @@ function JobForm({
           data-ocid="job-form-title"
         />
       </div>
-
-      {/* 2. Client */}
       <div className="space-y-1">
         <Label className="text-xs">Client *</Label>
         <Select
@@ -1663,8 +2474,6 @@ function JobForm({
           </SelectContent>
         </Select>
       </div>
-
-      {/* 3. Role Summary */}
       <div className="space-y-1">
         <Label className="text-xs">Role Summary</Label>
         <Input
@@ -1676,8 +2485,6 @@ function JobForm({
           data-ocid="job-form-role-summary"
         />
       </div>
-
-      {/* 4. Responsibilities */}
       <div className="space-y-1">
         <Label className="text-xs">Responsibilities</Label>
         <Textarea
@@ -1689,8 +2496,6 @@ function JobForm({
           data-ocid="job-form-responsibilities"
         />
       </div>
-
-      {/* 5. Required Skills */}
       <div className="space-y-1">
         <Label className="text-xs">Required Skills</Label>
         <Input
@@ -1702,8 +2507,6 @@ function JobForm({
           data-ocid="job-form-skills"
         />
       </div>
-
-      {/* 6. Experience */}
       <div className="space-y-1">
         <Label className="text-xs">Experience Required</Label>
         <Input
@@ -1715,8 +2518,6 @@ function JobForm({
           data-ocid="job-form-experience"
         />
       </div>
-
-      {/* 7. Location */}
       <div className="space-y-1">
         <Label className="text-xs">Location</Label>
         <Input
@@ -1728,8 +2529,6 @@ function JobForm({
           data-ocid="job-form-location"
         />
       </div>
-
-      {/* 8. Rate Structure */}
       <RateStructure
         rateType={form.rateType as RateType | ""}
         rateAmount={form.rateAmount ?? ""}
@@ -1740,7 +2539,6 @@ function JobForm({
           setForm((p) => ({ ...p, rateCurrency: v }))
         }
       />
-
       <div className="flex justify-end gap-2 pt-1">
         <Button
           type="submit"
@@ -1811,7 +2609,7 @@ function JobRow({
         <button
           type="button"
           onClick={onShare}
-          className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors duration-150"
+          className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
           aria-label={`Share ${job.title}`}
           data-ocid="job-row-share-btn"
         >
@@ -1841,8 +2639,13 @@ const STATUS_TABS: { label: string; value: "all" | JobStatus }[] = [
 export default function JobsPage() {
   const { data: jobs = [], isLoading: jobsLoading } = useJobs();
   const { data: clients = [] } = useClients();
+  const { data: vendors = [] } = useVendors();
+  const { data: resumes = [] } = useResumes();
+  const { data: allSubmissions = [], refetch: refetchSubmissions } =
+    useSubmissions();
   const createJob = useCreateJob();
   const updateJob = useUpdateJob();
+  const updateStage = useUpdateSubmissionStage();
 
   const [statusFilter, setStatusFilter] = useState<"all" | JobStatus>("all");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -1850,6 +2653,59 @@ export default function JobsPage() {
   const [showWAImport, setShowWAImport] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [sharingJob, setSharingJob] = useState<Job | null>(null);
+  const [viewMode, setViewMode] = useState<"jobs" | "kanban" | "list">("jobs");
+  // Optimistic submissions state
+  const [localSubmissions, setLocalSubmissions] = useState<Submission[]>([]);
+
+  const { toast: inlineToast, showToast, dismissToast } = useInlineToast();
+
+  // Job-scoped submissions: used when a specific job is selected in kanban/list
+  const inPipelineMode = viewMode === "kanban" || viewMode === "list";
+  const { data: jobScopedSubmissions = [] } = useSubmissionsForJob(
+    inPipelineMode && selectedJobId ? selectedJobId : "",
+  );
+
+  // Build lookup maps for enriching cards
+  const vendorMap = new Map<string, string>(vendors.map((v) => [v.id, v.name]));
+  const resumeSkillsMap = new Map<string, string[]>(
+    resumes.map((r) => {
+      const skills = Array.isArray(r.extractedSkills)
+        ? r.extractedSkills.slice(0, 3)
+        : typeof r.extractedSkills === "string" && r.extractedSkills
+          ? (r.extractedSkills as string)
+              .split(",")
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+              .slice(0, 3)
+          : [];
+      return [r.id, skills];
+    }),
+  );
+
+  // Sync local submissions with server data (merge job-scoped when filtering)
+  useEffect(() => {
+    if (inPipelineMode && selectedJobId && jobScopedSubmissions.length > 0) {
+      // Merge job-scoped into allSubmissions — replace matching entries
+      const jobIds = new Set(jobScopedSubmissions.map((s) => s.id));
+      const merged = [
+        ...allSubmissions.filter((s) => !jobIds.has(s.id)),
+        ...jobScopedSubmissions,
+      ];
+      setLocalSubmissions(merged);
+    } else {
+      setLocalSubmissions(allSubmissions);
+    }
+  }, [allSubmissions, jobScopedSubmissions, inPipelineMode, selectedJobId]);
+
+  // Real-time polling every 5s when tab is visible
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        refetchSubmissions();
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [refetchSubmissions]);
 
   const filteredJobs =
     statusFilter === "all"
@@ -1857,6 +2713,14 @@ export default function JobsPage() {
       : jobs.filter((j) => j.status === statusFilter);
   const openCount = jobs.filter((j) => j.status === "open").length;
   const selectedJob = jobs.find((j) => j.id === selectedJobId) ?? null;
+
+  function getClientName(job: Job): string {
+    return (
+      job.clientName ||
+      clients.find((c) => c.id === job.clientId)?.name ||
+      "Unknown Client"
+    );
+  }
 
   function handleRowClick(jobId: string) {
     setSelectedJobId((prev) => (prev === jobId ? null : jobId));
@@ -1886,21 +2750,94 @@ export default function JobsPage() {
     );
   }
 
-  function getClientName(job: Job): string {
-    return (
-      job.clientName ||
-      clients.find((c) => c.id === job.clientId)?.name ||
-      "Unknown Client"
+  // Optimistic stage update with rollback
+  function handleSubUpdate(
+    sub: Submission,
+    toStage: SubmissionPipelineStage,
+    reason?: string,
+    notes?: string,
+  ) {
+    const prevSubmissions = localSubmissions;
+    // Optimistic update
+    setLocalSubmissions((prev) =>
+      prev.map((s) =>
+        s.id === sub.id
+          ? {
+              ...s,
+              pipelineStage: toStage,
+              rejectionReason: reason ?? s.rejectionReason,
+              daysInStage: 0,
+              lastStageChangeAt: new Date().toISOString(),
+            }
+          : s,
+      ),
+    );
+
+    const update: SubmissionUpdateInput = {
+      stage: toStage,
+      ...(reason ? { rejectionReason: reason } : {}),
+      ...(notes ? { notes } : {}),
+    };
+    updateStage.mutate(
+      { id: sub.id, update, jobId: sub.jobId ?? undefined },
+      {
+        onSuccess: () => {
+          showToast(`Moved to "${getStageLabel(toStage)}"`, "success");
+          refetchSubmissions();
+        },
+        onError: () => {
+          // Rollback
+          setLocalSubmissions(prevSubmissions);
+          showToast("Failed to update stage. Change rolled back.", "error");
+        },
+      },
     );
   }
+
+  const pipelineJobId =
+    viewMode === "kanban" || viewMode === "list"
+      ? (selectedJobId ?? null)
+      : null;
 
   return (
     <div className="flex flex-col h-full" data-ocid="jobs-page">
       <PageHeader
         title={`Jobs (${openCount} open)`}
-        subtitle="Track open roles, match bench candidates, and manage submissions"
+        subtitle="Track open roles, match bench candidates, and manage the 10-stage submission pipeline"
         actions={
           <div className="flex items-center gap-2">
+            {/* View toggle */}
+            <div className="flex items-center border border-border rounded-md overflow-hidden">
+              {[
+                {
+                  mode: "jobs" as const,
+                  icon: <LayoutList className="h-3.5 w-3.5" />,
+                  label: "Jobs",
+                },
+                {
+                  mode: "kanban" as const,
+                  icon: <KanbanSquare className="h-3.5 w-3.5" />,
+                  label: "Kanban",
+                },
+                {
+                  mode: "list" as const,
+                  icon: <Users className="h-3.5 w-3.5" />,
+                  label: "Pipeline",
+                },
+              ].map(({ mode, icon, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setViewMode(mode)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-medium transition-colors ${viewMode === mode ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
+                  aria-label={label}
+                  data-ocid={`view-mode-${mode}`}
+                >
+                  {icon}
+                  <span className="hidden sm:inline">{label}</span>
+                </button>
+              ))}
+            </div>
             <Button
               variant="outline"
               size="sm"
@@ -1961,78 +2898,145 @@ export default function JobsPage() {
             </button>
           );
         })}
-      </div>
-
-      {/* Main content: list + optional side panel */}
-      <div className="flex-1 overflow-hidden flex">
-        {/* Jobs list */}
-        <div
-          className={`flex-1 overflow-y-auto bg-background ${selectedJob ? "border-r border-border" : ""}`}
-        >
-          {jobsLoading ? (
-            <div className="p-4 space-y-2">
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-12 w-full rounded" />
-              ))}
-            </div>
-          ) : filteredJobs.length === 0 ? (
-            <EmptyState
-              icon={Briefcase}
-              title={
-                statusFilter === "all"
-                  ? "No jobs yet"
-                  : `No ${statusFilter} jobs`
-              }
-              message={
-                statusFilter === "all"
-                  ? "Add your first job order to start matching bench candidates."
-                  : `There are no jobs with status "${statusFilter}" right now.`
-              }
-              action={
-                statusFilter === "all"
-                  ? { label: "Add Job", onClick: () => setShowAddModal(true) }
-                  : undefined
-              }
-            />
-          ) : (
-            <div>
-              {/* Table header */}
-              <div className="grid grid-cols-[1fr_120px_130px_140px_80px_52px_28px] gap-2 px-3 py-1.5 bg-muted/20 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0 z-10">
-                <span>Title / Location</span>
-                <span>Client</span>
-                <span>Compensation</span>
-                <span>Created</span>
-                <span>Status</span>
-                <span className="text-center">Share</span>
-                <span />
-              </div>
-              {filteredJobs.map((job) => (
-                <JobRow
-                  key={job.id}
-                  job={job}
-                  clientName={getClientName(job)}
-                  isSelected={selectedJobId === job.id}
-                  onClick={() => handleRowClick(job.id)}
-                  onShare={(e) => {
-                    e.stopPropagation();
-                    setSharingJob(job);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Side panel */}
-        {selectedJob && (
-          <JobDetailPanel
-            job={selectedJob}
-            clients={clients}
-            onEdit={(job) => setEditingJob(job)}
-            onClose={() => setSelectedJobId(null)}
-          />
+        {(viewMode === "kanban" || viewMode === "list") && (
+          <div className="ml-auto flex items-center gap-2 pb-1">
+            <span className="text-[10px] text-muted-foreground">
+              {localSubmissions.length} submissions
+            </span>
+          </div>
         )}
       </div>
+
+      {/* Main content */}
+      {viewMode === "jobs" ? (
+        <div className="flex-1 overflow-hidden flex">
+          <div
+            className={`flex-1 overflow-y-auto bg-background ${selectedJob ? "border-r border-border" : ""}`}
+          >
+            {jobsLoading ? (
+              <div className="p-4 space-y-2">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} className="h-12 w-full rounded" />
+                ))}
+              </div>
+            ) : filteredJobs.length === 0 ? (
+              <EmptyState
+                icon={Briefcase}
+                title={
+                  statusFilter === "all"
+                    ? "No jobs yet"
+                    : `No ${statusFilter} jobs`
+                }
+                message={
+                  statusFilter === "all"
+                    ? "Add your first job order to start matching bench candidates."
+                    : `There are no jobs with status "${statusFilter}" right now.`
+                }
+                action={
+                  statusFilter === "all"
+                    ? { label: "Add Job", onClick: () => setShowAddModal(true) }
+                    : undefined
+                }
+              />
+            ) : (
+              <div>
+                <div className="grid grid-cols-[1fr_120px_130px_140px_80px_52px_28px] gap-2 px-3 py-1.5 bg-muted/20 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider sticky top-0 z-10">
+                  <span>Title / Location</span>
+                  <span>Client</span>
+                  <span>Compensation</span>
+                  <span>Created</span>
+                  <span>Status</span>
+                  <span className="text-center">Share</span>
+                  <span />
+                </div>
+                {filteredJobs.map((job) => (
+                  <JobRow
+                    key={job.id}
+                    job={job}
+                    clientName={getClientName(job)}
+                    isSelected={selectedJobId === job.id}
+                    onClick={() => handleRowClick(job.id)}
+                    onShare={(e) => {
+                      e.stopPropagation();
+                      setSharingJob(job);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+          {selectedJob && (
+            <JobDetailPanel
+              job={selectedJob}
+              clients={clients}
+              onEdit={(job) => setEditingJob(job)}
+              onClose={() => setSelectedJobId(null)}
+            />
+          )}
+        </div>
+      ) : viewMode === "kanban" ? (
+        <div className="flex-1 overflow-hidden flex flex-col bg-background">
+          {/* Job selector for kanban */}
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card">
+            <span className="text-xs text-muted-foreground shrink-0">
+              Filter by job:
+            </span>
+            <select
+              value={selectedJobId ?? ""}
+              onChange={(e) => setSelectedJobId(e.target.value || null)}
+              className="text-xs border border-input rounded bg-background text-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+              data-ocid="kanban-job-filter"
+            >
+              <option value="">All jobs</option>
+              {jobs
+                .filter((j) => j.status === "open")
+                .map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.title}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <KanbanBoard
+            submissions={localSubmissions.filter((s) => !s.deletedAt)}
+            jobId={pipelineJobId}
+            vendorMap={vendorMap}
+            resumeSkillsMap={resumeSkillsMap}
+            onSubUpdate={handleSubUpdate}
+            showToast={showToast}
+          />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-hidden flex flex-col bg-background">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card">
+            <span className="text-xs text-muted-foreground shrink-0">
+              Filter by job:
+            </span>
+            <select
+              value={selectedJobId ?? ""}
+              onChange={(e) => setSelectedJobId(e.target.value || null)}
+              className="text-xs border border-input rounded bg-background text-foreground px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+              data-ocid="list-job-filter"
+            >
+              <option value="">All jobs</option>
+              {jobs
+                .filter((j) => j.status === "open")
+                .map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.title}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <SubmissionListView
+            submissions={localSubmissions.filter((s) => !s.deletedAt)}
+            jobId={pipelineJobId}
+            vendorMap={vendorMap}
+            onSubUpdate={handleSubUpdate}
+            showToast={showToast}
+          />
+        </div>
+      )}
 
       {/* Share Job Modal (from list row) */}
       {sharingJob && (
@@ -2097,6 +3101,9 @@ export default function JobsPage() {
           />
         )}
       </AppModal>
+
+      {/* Inline toast */}
+      <InlineToast toast={inlineToast} onDismiss={dismissToast} />
     </div>
   );
 }

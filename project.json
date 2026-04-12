@@ -1,24 +1,27 @@
 {
-  "overview": "HireNest Command Center is an AI-powered CRM for staffing and recruiting businesses. It centralizes vendors, clients, recruiters, candidates, and job orders with pipeline management, bench matching, and WhatsApp job intake.",
+  "overview": "HireNest Command Center is an AI-powered staffing CRM that centralizes vendor, client, recruiter, and candidate workflows in one modern interface. Features a 10-stage job pipeline kanban, drag-drop resume upload with scored job matching, vendor shared profile tracking, and client job order management — all with dark/light theme support and mobile-responsive design.",
   "features": [
-    "WhatsApp job requirement text parser — paste raw text, auto-extract job details",
-    "Auto-create client records from parsed company names",
-    "Job intake modal with pre-filled review form",
-    "LPM/LPA/Per Hour rate structure on all jobs",
-    "Vendor bench management with match scoring",
-    "Kanban pipelines for all entity types",
-    "Light/dark/system theme toggle",
-    "Supabase integration with SQL editor"
+    "10-stage job pipeline Kanban with drag-drop and stage validation",
+    "Resume upload with auto-extraction and duplicate detection",
+    "Scored job matching (skills, experience, rate, availability)",
+    "Client job orders with pipeline preview and filled count",
+    "Vendor shared profiles with stats cards and days-in-stage",
+    "Optimistic UI with rollback and toast notifications",
+    "Rejection reason modal with stage history tracking",
+    "WhatsApp job intake with auto-client creation",
+    "Bench management with multi-format upload and matching",
+    "Dark/light/system theme with mobile-responsive layout"
   ],
-  "category": "crm",
+  "category": "productivity",
   "tags": [
     "crm",
     "staffing",
     "recruiting",
-    "whatsapp",
-    "jobs",
-    "bench-management",
-    "supabase"
+    "kanban",
+    "resume",
+    "pipeline",
+    "vendor-management",
+    "hiring"
   ],
-  "last_updated": "2026-04-10T10:51:39.338Z"
+  "last_updated": "2026-04-12T04:55:19.054Z"
 }

@@ -5,9 +5,33 @@
 
 import type { Job } from "../types/crm";
 
+// ── Unicode sanitization ──────────────────────────────────────────────────────
+
+/** Replace Unicode "smart" punctuation and non-ASCII with safe ASCII equivalents */
+export function sanitizeText(text: string): string {
+  return (
+    text
+      // Smart single quotes
+      .replace(/[\u2018\u2019]/g, "'")
+      // Smart double quotes
+      .replace(/[\u201C\u201D]/g, '"')
+      // Em dash
+      .replace(/\u2014/g, "--")
+      // En dash
+      .replace(/\u2013/g, "-")
+      // Bullets
+      .replace(/[\u2022\u25AA\u25CF]/g, "*")
+      // Ellipsis
+      .replace(/\u2026/g, "...")
+      // Remove any remaining non-ASCII characters (> 0x7F)
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional
+      .replace(/[^\x00-\x7F]/g, "")
+  );
+}
+
 // ── DOCX text extraction ──────────────────────────────────────────────────────
 
-/** Extract plain text from a DOCX ArrayBuffer using the same w:t XML approach as BenchPage */
+/** Extract plain text from a DOCX ArrayBuffer using the w:t XML approach */
 export function extractTextFromDocx(buffer: ArrayBuffer): string {
   try {
     const bytes = new Uint8Array(buffer);
@@ -22,12 +46,14 @@ export function extractTextFromDocx(buffer: ArrayBuffer): string {
       if (t) texts.push(t);
       match = regex.exec(raw);
     }
-    if (texts.length > 0) return texts.join(" ");
-    // Fallback: strip all XML tags
-    return raw
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const result =
+      texts.length > 0
+        ? texts.join(" ")
+        : raw
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    return sanitizeText(result);
   } catch {
     return "";
   }
@@ -40,7 +66,6 @@ export function extractTextFromPdf(buffer: ArrayBuffer): string {
   try {
     const bytes = new Uint8Array(buffer);
     let raw = "";
-    // Build string from printable ASCII bytes only
     for (let i = 0; i < Math.min(bytes.length, 500_000); i++) {
       const b = bytes[i];
       if (b >= 32 && b < 127) {
@@ -50,12 +75,10 @@ export function extractTextFromPdf(buffer: ArrayBuffer): string {
       }
     }
 
-    // Extract text between BT (Begin Text) and ET (End Text) markers
     const btEtTexts: string[] = [];
     const btEtRegex = /BT\s*([\s\S]*?)\s*ET/g;
     let m = btEtRegex.exec(raw);
     while (m !== null) {
-      // Extract strings inside () parentheses (PDF text objects)
       const block = m[1];
       const strRegex = /\(([^)]*)\)/g;
       let sm = strRegex.exec(block);
@@ -67,102 +90,136 @@ export function extractTextFromPdf(buffer: ArrayBuffer): string {
       m = btEtRegex.exec(raw);
     }
 
+    let result = "";
     if (btEtTexts.length > 0) {
-      return btEtTexts.join(" ").replace(/\s+/g, " ").trim();
+      result = btEtTexts.join(" ").replace(/\s+/g, " ").trim();
+    } else {
+      result = raw
+        .split(/\s+/)
+        .filter((w) => w.length > 1 && /[a-zA-Z]/.test(w))
+        .join(" ")
+        .substring(0, 8000);
     }
-
-    // Fallback: return printable characters, filter noise
-    return raw
-      .split(/\s+/)
-      .filter((w) => w.length > 1 && /[a-zA-Z]/.test(w))
-      .join(" ")
-      .substring(0, 8000);
+    return sanitizeText(result);
   } catch {
     return "";
   }
 }
 
-// ── Resume parsing ────────────────────────────────────────────────────────────
+// ── Skill normalization map ────────────────────────────────────────────────────
 
-const KNOWN_SKILLS = [
-  "react",
-  "angular",
-  "vue",
-  "svelte",
-  "typescript",
-  "javascript",
-  "python",
-  "java",
-  "go",
-  "golang",
-  "rust",
-  "c++",
-  "c#",
-  "php",
-  "ruby",
-  "swift",
-  "kotlin",
-  "node.js",
-  "nodejs",
-  "express",
-  "django",
-  "flask",
-  "spring",
-  "nextjs",
-  "next.js",
-  "nestjs",
-  "graphql",
-  "rest",
-  "sql",
-  "mysql",
-  "postgresql",
-  "mongodb",
-  "redis",
-  "elasticsearch",
-  "aws",
-  "azure",
-  "gcp",
-  "docker",
-  "kubernetes",
-  "terraform",
-  "linux",
-  "git",
-  "ci/cd",
-  "jenkins",
-  "github",
-  "html",
-  "css",
-  "tailwind",
-  "sass",
-  "webpack",
-  "vite",
-  "figma",
-  "agile",
-  "scrum",
-  "jira",
-  "salesforce",
-  "servicenow",
-  "sap",
-  "tableau",
-  "powerbi",
-  "machine learning",
-  "deep learning",
-  "tensorflow",
-  "pytorch",
-  "data science",
-  "etl",
-  "hadoop",
-  "spark",
-  "kafka",
-  "microservices",
-  "devops",
-  "ios",
-  "android",
-  "react native",
-  "flutter",
-  "selenium",
-  "cypress",
-];
+const SKILL_ALIASES: Record<string, string> = {
+  // JavaScript
+  js: "JavaScript",
+  javascript: "JavaScript",
+  // TypeScript
+  ts: "TypeScript",
+  typescript: "TypeScript",
+  // React
+  react: "React",
+  "react.js": "React",
+  reactjs: "React",
+  // Node.js
+  node: "Node.js",
+  "node.js": "Node.js",
+  nodejs: "Node.js",
+  // Vue
+  vue: "Vue.js",
+  "vue.js": "Vue.js",
+  vuejs: "Vue.js",
+  // Angular
+  angular: "Angular",
+  "angular.js": "Angular",
+  angularjs: "Angular",
+  // Python
+  py: "Python",
+  python: "Python",
+  // Salesforce
+  sf: "Salesforce",
+  sfdc: "Salesforce",
+  salesforce: "Salesforce",
+  "salesforce.com": "Salesforce",
+  // SQL / Databases
+  sql: "SQL",
+  mysql: "MySQL",
+  postgresql: "PostgreSQL",
+  postgres: "PostgreSQL",
+  // Cloud
+  aws: "AWS",
+  "amazon web services": "AWS",
+  gcp: "GCP",
+  "google cloud": "GCP",
+  azure: "Azure",
+  "ms azure": "Azure",
+  "microsoft azure": "Azure",
+  // DevOps
+  docker: "Docker",
+  kubernetes: "Kubernetes",
+  k8s: "Kubernetes",
+  // Languages
+  "c#": "C#",
+  csharp: "C#",
+  "c++": "C++",
+  cpp: "C++",
+  java: "Java",
+  go: "Go",
+  golang: "Go",
+  rust: "Rust",
+  php: "PHP",
+  ruby: "Ruby",
+  swift: "Swift",
+  kotlin: "Kotlin",
+  // Other common
+  nextjs: "Next.js",
+  "next.js": "Next.js",
+  nestjs: "NestJS",
+  graphql: "GraphQL",
+  rest: "REST",
+  terraform: "Terraform",
+  linux: "Linux",
+  git: "Git",
+  html: "HTML",
+  css: "CSS",
+  tailwind: "Tailwind CSS",
+  figma: "Figma",
+  agile: "Agile",
+  scrum: "Scrum",
+  jira: "Jira",
+  tableau: "Tableau",
+  powerbi: "Power BI",
+  "machine learning": "Machine Learning",
+  ml: "Machine Learning",
+  "deep learning": "Deep Learning",
+  tensorflow: "TensorFlow",
+  pytorch: "PyTorch",
+  devops: "DevOps",
+  flutter: "Flutter",
+  selenium: "Selenium",
+  cypress: "Cypress",
+  kafka: "Kafka",
+  redis: "Redis",
+  mongodb: "MongoDB",
+  elasticsearch: "Elasticsearch",
+  spark: "Apache Spark",
+  hadoop: "Hadoop",
+  microservices: "Microservices",
+  "react native": "React Native",
+  django: "Django",
+  flask: "Flask",
+  spring: "Spring",
+  express: "Express",
+  sap: "SAP",
+  servicenow: "ServiceNow",
+};
+
+function normalizeSkill(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  return SKILL_ALIASES[key] ?? raw.trim();
+}
+
+const KNOWN_SKILLS = Object.keys(SKILL_ALIASES);
+
+// ── Resume parsing ────────────────────────────────────────────────────────────
 
 const JOB_TITLE_KEYWORDS = [
   "engineer",
@@ -191,34 +248,44 @@ const JOB_TITLE_KEYWORDS = [
 
 export interface ParsedResume {
   candidateName: string;
+  email?: string;
+  phone?: string;
+  location?: string;
+  yearsExperience?: number;
   extractedRole: string;
-  extractedSkills: string;
+  skills: string[];
+  extractedSkills: string; // comma-joined for backward compat
   extractedExperience: string;
 }
 
 /** Parse raw resume text into structured fields */
 export function parseResumeText(text: string): ParsedResume {
-  const lines = text
+  const sanitized = sanitizeText(text);
+  const lines = sanitized
     .split(/[\n\r]+/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
+  const skills = extractSkillsArray(sanitized);
+
   return {
     candidateName: extractName(lines),
-    extractedRole: extractRole(text, lines),
-    extractedSkills: extractSkills(text),
-    extractedExperience: extractExperience(text),
+    email: extractEmail(sanitized),
+    phone: extractPhone(sanitized),
+    location: extractLocation(lines),
+    yearsExperience: extractYearsExperience(sanitized),
+    extractedRole: extractRole(sanitized, lines),
+    skills,
+    extractedSkills: skills.join(", "),
+    extractedExperience: extractExperienceString(sanitized),
   };
 }
 
 function extractName(lines: string[]): string {
-  // Look for a name-like line near the top (capitalized words, no special chars, not an email)
   for (let i = 0; i < Math.min(lines.length, 6); i++) {
     const line = lines[i];
-    // Skip lines that look like emails, phones, URLs, or section headers
     if (/[@|:|http|www|resume|curriculum|vitae]/i.test(line)) continue;
     if (/^\d/.test(line)) continue;
-    // A name is typically 2-4 words, mostly letters
     const words = line.split(/\s+/);
     if (words.length >= 2 && words.length <= 5) {
       const allAlpha = words.every((w) => /^[A-Za-z\-'.]+$/.test(w));
@@ -231,10 +298,64 @@ function extractName(lines: string[]): string {
   return "";
 }
 
+function extractEmail(text: string): string | undefined {
+  const m = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  return m ? m[0] : undefined;
+}
+
+function extractPhone(text: string): string | undefined {
+  const m = text.match(/(\+?1?\s?)?(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})/);
+  if (!m) return undefined;
+  return m[0].trim();
+}
+
+function extractLocation(lines: string[]): string | undefined {
+  // Check prefixed label lines first
+  const labelPat = /(?:location|based in|address|city)\s*[:\-]\s*(.+)/i;
+  for (const line of lines.slice(0, 25)) {
+    const m = line.match(labelPat);
+    if (m?.[1]) {
+      const val = m[1].trim();
+      if (val.length > 2 && val.length < 80) return val;
+    }
+  }
+  // Detect "City, State" or "City, Country" pattern (2-word comma pattern near top)
+  const cityStatePat = /^([A-Za-z\s]+),\s*([A-Za-z\s]{2,30})$/;
+  for (const line of lines.slice(0, 20)) {
+    if (cityStatePat.test(line) && line.length < 60 && !/@/.test(line)) {
+      return line;
+    }
+  }
+  return undefined;
+}
+
+function extractYearsExperience(text: string): number | undefined {
+  const lower = text.toLowerCase();
+  const patterns = [
+    /(\d+)\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:experience|exp)/i,
+    /experience\s*[:\-]?\s*(\d+)\+?\s*(?:years?|yrs?)/i,
+    /(\d+)\+?\s*(?:years?|yrs?)\s*(?:total|overall)/i,
+    /senior\s*\(?(\d+)\+?\s*(?:years?|yrs?)\)?/i,
+  ];
+  for (const pat of patterns) {
+    const m = lower.match(pat);
+    if (m?.[1]) {
+      const n = Number.parseInt(m[1], 10);
+      if (n > 0 && n < 50) return n;
+    }
+  }
+  // Range: "0-2 years" → 1
+  const rangeM = lower.match(/(\d+)\s*[-–]\s*(\d+)\s*(?:years?|yrs?)/i);
+  if (rangeM?.[1] && rangeM?.[2]) {
+    const lo = Number.parseInt(rangeM[1], 10);
+    const hi = Number.parseInt(rangeM[2], 10);
+    return Math.round((lo + hi) / 2);
+  }
+  return undefined;
+}
+
 function extractRole(text: string, lines: string[]): string {
   const lowerText = text.toLowerCase();
-
-  // Look for explicit label
   const labelPatterns = [
     /(?:title|role|position|designation)\s*[:\-]\s*([^\n\r,]+)/i,
     /(?:objective|summary)\s*[:\-]\s*([^\n\r,]+)/i,
@@ -247,20 +368,17 @@ function extractRole(text: string, lines: string[]): string {
       if (candidate.length > 3 && candidate.length < 80) return candidate;
     }
   }
-
-  // Look for a line that contains job title keywords
   for (const line of lines.slice(0, 20)) {
     const lower = line.toLowerCase();
     const hasTitle = JOB_TITLE_KEYWORDS.some((kw) => lower.includes(kw));
     if (hasTitle && line.length < 80 && line.length > 5) {
-      // Make sure it's not a section header with lots of uppercase
       if (!/^[A-Z\s]+$/.test(line)) return line;
     }
   }
   return "";
 }
 
-function extractSkills(text: string): string {
+function extractSkillsArray(text: string): string[] {
   const lower = text.toLowerCase();
   const found: string[] = [];
 
@@ -275,23 +393,39 @@ function extractSkills(text: string): string {
       .map((s) => s.trim())
       .filter((s) => s.length > 1 && s.length < 40);
     if (items.length >= 3) {
-      return items.slice(0, 20).join(", ");
+      const normalized = items
+        .slice(0, 25)
+        .map(normalizeSkill)
+        .filter((s) => s.length > 0);
+      // Deduplicate case-insensitively
+      return deduplicateSkills(normalized);
     }
   }
 
   // Scan for known tech keywords
-  for (const skill of KNOWN_SKILLS) {
-    if (lower.includes(skill)) {
-      found.push(skill);
+  for (const alias of KNOWN_SKILLS) {
+    if (lower.includes(alias)) {
+      found.push(normalizeSkill(alias));
     }
   }
-  return found.slice(0, 20).join(", ");
+  return deduplicateSkills(found).slice(0, 20);
 }
 
-function extractExperience(text: string): string {
-  const lower = text.toLowerCase();
+function deduplicateSkills(skills: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const s of skills) {
+    const key = s.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(s);
+    }
+  }
+  return result;
+}
 
-  // Pattern: "X years" or "X+ years" or "X yrs"
+function extractExperienceString(text: string): string {
+  const lower = text.toLowerCase();
   const yearsPatterns = [
     /(\d+)\+?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:experience|exp)/i,
     /experience\s*[:\-]?\s*(\d+)\+?\s*(?:years?|yrs?)/i,
@@ -304,7 +438,6 @@ function extractExperience(text: string): string {
     }
   }
 
-  // Count distinct year spans in work history (e.g. 2018 - 2022)
   const yearSpans = [
     ...lower.matchAll(/20(\d{2})\s*[-–—to]+\s*(?:20(\d{2})|present|current)/gi),
   ];
@@ -329,9 +462,10 @@ export interface MatchResult {
   matchedKeywords: string[];
 }
 
-/** Score how well a resume matches a job based on keyword overlap */
+/** Score how well a resume matches a job based on keyword overlap.
+ *  Accepts skills as string (comma-joined) or string[] */
 export function scoreJobMatch(
-  resumeSkills: string,
+  resumeSkillsOrArr: string | string[],
   resumeRole: string,
   resumeExperience: string,
   job: Pick<
@@ -343,8 +477,11 @@ export function scoreJobMatch(
     | "experience"
   > & { skills?: string },
 ): MatchResult {
+  const skillsStr = Array.isArray(resumeSkillsOrArr)
+    ? resumeSkillsOrArr.join(", ")
+    : resumeSkillsOrArr;
   const resumeTokens = tokenize(
-    `${resumeSkills} ${resumeRole} ${resumeExperience}`,
+    `${skillsStr} ${resumeRole} ${resumeExperience}`,
   );
   const jobText = [
     job.requiredSkills ?? "",
@@ -363,7 +500,6 @@ export function scoreJobMatch(
   );
   const unique = [...new Set(matched)];
 
-  // Role title bonus: if resume role words appear in job title
   const roleLower = resumeRole.toLowerCase();
   const titleLower = (job.title ?? "").toLowerCase();
   const roleBonus = roleLower

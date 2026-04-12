@@ -29,16 +29,18 @@ import {
   useCreateApprovalItem,
   useCreateCandidate,
   useUpdateEntityStage,
+  useVendors,
 } from "@/hooks/use-crm";
 import { getSupabaseCreds } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { getRelativeTime } from "@/lib/utils/health";
 import { CANDIDATE_STAGES, stageRequiresApproval } from "@/lib/utils/pipeline";
+import type { Vendor } from "@/types/crm";
 import type { Candidate } from "@/types/crm";
 import type { CandidateFormInput } from "@/types/forms";
 import { Link } from "@tanstack/react-router";
 import { AlertCircle, GripVertical, Lock, Plus, UserIcon } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -76,6 +78,7 @@ function probColor(prob: number): string {
 
 interface KanbanCardProps {
   candidate: Candidate;
+  vendorName?: string;
   onDragStart: (
     e: React.DragEvent,
     candidateId: string,
@@ -83,7 +86,7 @@ interface KanbanCardProps {
   ) => void;
 }
 
-function KanbanCard({ candidate, onDragStart }: KanbanCardProps) {
+function KanbanCard({ candidate, vendorName, onDragStart }: KanbanCardProps) {
   const prob = computePlacementProb(candidate);
   const days = getDaysInStageSince(candidate.updatedAt);
   const skillLabel = candidate.skills?.slice(0, 20) ?? candidate.title ?? "—";
@@ -108,9 +111,15 @@ function KanbanCard({ candidate, onDragStart }: KanbanCardProps) {
           </span>
           <HealthBadge score={candidate.healthScore} size="sm" />
         </div>
-        <p className="text-[11px] text-muted-foreground truncate mb-2">
+        <p className="text-[11px] text-muted-foreground truncate mb-1.5">
           {skillLabel}
         </p>
+        {vendorName && (
+          <p className="text-[10px] text-primary/70 truncate mb-1.5 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 flex-shrink-0" />
+            {vendorName}
+          </p>
+        )}
         <div className="flex items-center justify-between gap-2">
           <span className="text-[10px] text-muted-foreground">
             {days}d in stage
@@ -134,6 +143,7 @@ function KanbanCard({ candidate, onDragStart }: KanbanCardProps) {
 interface KanbanColProps {
   stage: string;
   candidates: Candidate[];
+  vendorMap: Map<string, Vendor>;
   onDragStart: (e: React.DragEvent, id: string, from: string) => void;
   onDrop: (e: React.DragEvent, toStage: string) => void;
   isDragOver: boolean;
@@ -144,6 +154,7 @@ interface KanbanColProps {
 function KanbanCol({
   stage,
   candidates,
+  vendorMap,
   onDragStart,
   onDrop,
   isDragOver,
@@ -189,9 +200,19 @@ function KanbanCol({
           isDragOver && "bg-primary/5 border-primary/30",
         )}
       >
-        {candidates.map((c) => (
-          <KanbanCard key={c.id} candidate={c} onDragStart={onDragStart} />
-        ))}
+        {candidates.map((c) => {
+          const vendorName = c.assignedRecruiter
+            ? undefined
+            : vendorMap.get(c.assignedRecruiter ?? "")?.name;
+          return (
+            <KanbanCard
+              key={c.id}
+              candidate={c}
+              vendorName={vendorName}
+              onDragStart={onDragStart}
+            />
+          );
+        })}
         {candidates.length === 0 && (
           <div className="flex items-center justify-center h-16 rounded-sm border border-dashed border-border/40">
             <span className="text-[10px] text-muted-foreground/50">
@@ -218,6 +239,7 @@ function AddCandidateModal({
     formState: { errors, isSubmitting },
   } = useForm<CandidateFormInput>();
   const createCandidate = useCreateCandidate();
+  const { data: vendors = [] } = useVendors();
 
   async function onSubmit(data: CandidateFormInput) {
     try {
@@ -325,6 +347,35 @@ function AddCandidateModal({
             </Select>
           </div>
         </div>
+        <div className="space-y-1">
+          <Label className="text-xs">
+            Vendor{" "}
+            <span className="text-muted-foreground font-normal">
+              (which vendor is processing this profile)
+            </span>
+          </Label>
+          <Select
+            onValueChange={(v) =>
+              setValue("vendorId", v === "__none__" ? undefined : v)
+            }
+          >
+            <SelectTrigger
+              className="h-8 text-xs"
+              data-ocid="candidate-vendor-select"
+            >
+              <SelectValue placeholder="Select vendor (optional)…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">— None —</SelectItem>
+              {vendors.map((v) => (
+                <SelectItem key={v.id} value={v.id}>
+                  {v.name}
+                  {v.company ? ` · ${v.company}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
             <Label className="text-xs">Salary Min ($)</Label>
@@ -384,12 +435,19 @@ function AddCandidateModal({
 
 export default function CandidatesPage() {
   const { data: candidates = [], isLoading } = useCandidates();
+  const { data: vendors = [] } = useVendors();
   const updateStage = useUpdateEntityStage();
   const createApproval = useCreateApprovalItem();
   const [showAdd, setShowAdd] = useState(false);
   const [filter, setFilter] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [dragOver, setDragOver] = useState<string | null>(null);
+
+  // Build vendor lookup map for kanban cards
+  const vendorMap = useMemo(
+    () => new Map(vendors.map((v) => [v.id, v])),
+    [vendors],
+  );
 
   const filtered = candidates.filter(
     (c) =>
@@ -538,6 +596,7 @@ export default function CandidatesPage() {
                   key={stage}
                   stage={stage}
                   candidates={byStage[stage] ?? []}
+                  vendorMap={vendorMap}
                   onDragStart={handleDragStart}
                   onDrop={handleDrop}
                   isDragOver={dragOver === stage}
@@ -572,6 +631,9 @@ export default function CandidatesPage() {
                     Skills
                   </TableHead>
                   <TableHead className="text-[11px] h-8">Stage</TableHead>
+                  <TableHead className="text-[11px] h-8 hidden lg:table-cell">
+                    Vendor
+                  </TableHead>
                   <TableHead className="text-[11px] h-8 text-center">
                     Health
                   </TableHead>
@@ -595,6 +657,9 @@ export default function CandidatesPage() {
                     "candidate",
                     c.currentStage,
                   );
+                  const vendorName = vendorMap.get(
+                    c.assignedRecruiter ?? "",
+                  )?.name;
                   return (
                     <TableRow
                       key={c.id}
@@ -636,6 +701,11 @@ export default function CandidatesPage() {
                             {c.currentStage}
                           </Badge>
                         </div>
+                      </TableCell>
+                      <TableCell className="py-2 hidden lg:table-cell">
+                        <span className="text-[11px] text-muted-foreground">
+                          {vendorName ?? "—"}
+                        </span>
                       </TableCell>
                       <TableCell className="py-2 text-center">
                         <HealthBadge

@@ -1,4 +1,13 @@
-import type { EntityType } from "../../types/crm";
+import type { EntityType, SubmissionPipelineStage } from "../../types/crm";
+import {
+  ALLOWED_STAGE_TRANSITIONS,
+  PIPELINE_STAGE_COLORS,
+  PIPELINE_STAGE_LABELS,
+} from "../../types/crm";
+
+export { PIPELINE_STAGE_LABELS, PIPELINE_STAGE_COLORS };
+
+// ── Entity Pipeline Stages ────────────────────────────────────────────────────
 
 export const VENDOR_STAGES = [
   "Discovery",
@@ -79,4 +88,64 @@ export function stageProgress(type: EntityType, stage: string): number {
   const idx = stages.indexOf(stage);
   if (idx === -1) return 0;
   return Math.round(((idx + 1) / stages.length) * 100);
+}
+
+// ── Submission Pipeline (10 stages) ──────────────────────────────────────────
+
+/** Ordered list of submission pipeline stages for kanban column ordering. */
+export const STAGE_ORDER: SubmissionPipelineStage[] = [
+  "resume_sent",
+  "internal_screening",
+  "submitted_to_client",
+  "client_screening",
+  "client_interview",
+  "offer_extended",
+  "offer_accepted",
+  "placed",
+  "onboarding",
+  "rejected",
+];
+
+/** Stage transitions derived from ALLOWED_STAGE_TRANSITIONS in types/crm.ts */
+export const STAGE_TRANSITIONS = ALLOWED_STAGE_TRANSITIONS;
+
+/**
+ * Returns true if transitioning from `from` to `to` is a valid move.
+ */
+export function isValidTransition(
+  from: SubmissionPipelineStage,
+  to: SubmissionPipelineStage,
+): boolean {
+  const allowed = ALLOWED_STAGE_TRANSITIONS[from];
+  return allowed?.includes(to) ?? false;
+}
+
+/**
+ * Returns the hex color for a given pipeline stage.
+ */
+export function getStageColor(stage: SubmissionPipelineStage): string {
+  return PIPELINE_STAGE_COLORS[stage] ?? "#6b7280";
+}
+
+/**
+ * Returns the human-readable label for a given pipeline stage.
+ */
+export function getStageLabel(stage: SubmissionPipelineStage): string {
+  return PIPELINE_STAGE_LABELS[stage] ?? stage;
+}
+
+/**
+ * Computes the number of whole days since the last stage change.
+ * Falls back to createdAt if lastStageChangeAt is undefined.
+ */
+export function getDaysInStage(
+  lastStageChangeAt: string | undefined,
+  createdAt: string,
+): number {
+  const ref = lastStageChangeAt ?? createdAt;
+  if (!ref) return 0;
+  const refMs = new Date(ref).getTime();
+  if (Number.isNaN(refMs)) return 0;
+  const diffMs = Date.now() - refMs;
+  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
 }

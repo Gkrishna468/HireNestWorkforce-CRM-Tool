@@ -24,6 +24,7 @@ import type {
   RecruiterFormInput,
   RecruiterMetricsFormInput,
   SubmissionFormInput,
+  SubmissionUpdateInput,
   VendorFormInput,
   VendorMetricsFormInput,
 } from "../types/forms";
@@ -58,6 +59,7 @@ export const QK = {
   bench: ["bench"] as const,
   benchMatch: (jobId: string) => ["bench-match", jobId] as const,
   resumes: ["resumes"] as const,
+  clientJobLinks: (clientId: string) => ["client-job-links", clientId] as const,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -531,6 +533,15 @@ export function useSubmissionsForCandidate(candidateId: string) {
   });
 }
 
+export function useSubmissionsForResume(resumeId: string) {
+  return useQuery({
+    queryKey: ["submissions", "resume", resumeId] as const,
+    queryFn: () => api.getSubmissionsForResume(null, resumeId),
+    enabled: !!resumeId && !!getSupabaseCreds(),
+    retry: false,
+  });
+}
+
 export function useCreateSubmission() {
   const qc = useQueryClient();
   return useMutation({
@@ -557,6 +568,47 @@ export function useUpdateSubmission() {
     }) => {
       checkSupabaseOrThrow();
       return api.updateSubmission(null, id, patch);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.submissions });
+      qc.invalidateQueries({ queryKey: ["submissions"] });
+    },
+    onError: handleMutationError,
+  });
+}
+
+export function useUpdateSubmissionStage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      update,
+    }: { id: string; update: SubmissionUpdateInput; jobId?: string }) => {
+      checkSupabaseOrThrow();
+      return api.updateSubmissionStage(id, update);
+    },
+    onSuccess: (_data, variables) => {
+      // Invalidate all submission query variants so job-scoped and vendor-scoped
+      // views re-fetch automatically after a stage change.
+      qc.invalidateQueries({ queryKey: QK.submissions });
+      qc.invalidateQueries({ queryKey: ["submissions"] });
+      // If a jobId hint was passed, also invalidate that job-scoped key.
+      if (variables.jobId) {
+        qc.invalidateQueries({
+          queryKey: QK.submissionsForJob(variables.jobId),
+        });
+      }
+    },
+    onError: handleMutationError,
+  });
+}
+
+export function useSoftDeleteSubmission() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => {
+      checkSupabaseOrThrow();
+      return api.softDeleteSubmission(id);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.submissions });
@@ -815,10 +867,18 @@ export function useCreateResume() {
       fileName: string;
       fileUrl?: string;
       candidateName: string;
-      extractedSkills: string;
+      email?: string;
+      phone?: string;
+      extractedSkills: string[];
       extractedExperience: string;
       extractedRole: string;
       rawText: string;
+      status?: "pending" | "active" | "duplicate" | "archived";
+      availability?: string;
+      duplicateOf?: string;
+      yearsExperience?: number;
+      location?: string;
+      sourceVendorId?: string;
     }) => {
       checkSupabaseOrThrow();
       return api.createResume(input);
@@ -840,6 +900,22 @@ export function useDeleteResume() {
   });
 }
 
+export function useCheckDuplicateResume() {
+  return useMutation({
+    mutationFn: (email: string) => api.checkDuplicateResume(email),
+    onError: handleMutationError,
+  });
+}
+
+export function useListSubmissionsForResume(resumeId: string | undefined) {
+  return useQuery({
+    queryKey: ["submissions", "resume", resumeId ?? ""] as const,
+    queryFn: () => api.listSubmissionsForResume(resumeId ?? ""),
+    enabled: !!resumeId && !!getSupabaseCreds(),
+    retry: false,
+  });
+}
+
 export function useResumeJobMatches(resume: Resume | null) {
   return useQuery<ResumeMatch[]>({
     queryKey: ["resume-matches", resume?.id ?? ""],
@@ -854,14 +930,69 @@ export function useResumeJobMatches(resume: Resume | null) {
             resume.extractedExperience,
             job,
           );
-          return { job, matchScore: score, matchedKeywords };
+          return {
+            jobId: job.id,
+            jobTitle: job.title,
+            clientName: job.clientName ?? "",
+            totalScore: score,
+            skillsScore: Math.round(score * 0.6),
+            expScore: Math.round(score * 0.2),
+            rateScore: Math.round(score * 0.15),
+            availScore: Math.round(score * 0.05),
+            matchedSkills: matchedKeywords,
+            missingSkills: [],
+          };
         })
-        .sort((a, b) => b.matchScore - a.matchScore)
+        .sort((a, b) => b.totalScore - a.totalScore)
         .slice(0, 10);
       return matches;
     },
     enabled: !!resume && !!getSupabaseCreds(),
     retry: false,
+  });
+}
+
+// ── Client Job Links ──────────────────────────────────────────────────────────
+
+export function useClientJobLinks(clientId: string) {
+  return useQuery({
+    queryKey: QK.clientJobLinks(clientId),
+    queryFn: () => api.getClientJobLinks(clientId),
+    enabled: !!clientId && !!getSupabaseCreds(),
+    retry: false,
+  });
+}
+
+export function useCreateClientJobLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ clientId, jobId }: { clientId: string; jobId: string }) => {
+      checkSupabaseOrThrow();
+      return api.createClientJobLink(clientId, jobId);
+    },
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({
+        queryKey: QK.clientJobLinks(variables.clientId),
+      });
+      qc.invalidateQueries({ queryKey: QK.jobs });
+    },
+    onError: handleMutationError,
+  });
+}
+
+export function useSoftDeleteClientJobLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ clientId, jobId }: { clientId: string; jobId: string }) => {
+      checkSupabaseOrThrow();
+      return api.softDeleteClientJobLink(clientId, jobId);
+    },
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({
+        queryKey: QK.clientJobLinks(variables.clientId),
+      });
+    },
+    onError: handleMutationError,
   });
 }
 

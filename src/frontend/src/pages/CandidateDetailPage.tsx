@@ -21,21 +21,32 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   useActivities,
   useCandidates,
+  useClients,
   useCreateApprovalItem,
   useCreateSubmission,
   useFollowUps,
   useJobs,
   useLogActivity,
   useSubmissionsForCandidate,
+  useSubmissionsForResume,
   useUpdateCandidate,
   useUpdateEntityStage,
   useUpdateFollowUpStatus,
+  useUpdateSubmissionStage,
+  useVendors,
 } from "@/hooks/use-crm";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { getRelativeTime } from "@/lib/utils/health";
 import { CANDIDATE_STAGES, stageRequiresApproval } from "@/lib/utils/pipeline";
-import type { Candidate, Submission } from "@/types/crm";
+import {
+  ALLOWED_STAGE_TRANSITIONS,
+  type Candidate,
+  PIPELINE_STAGE_COLORS,
+  PIPELINE_STAGE_LABELS,
+  type Submission,
+  type SubmissionPipelineStage,
+} from "@/types/crm";
 import type { CandidateFormInput, SubmissionFormInput } from "@/types/forms";
 import { Link, useParams } from "@tanstack/react-router";
 import {
@@ -54,7 +65,7 @@ import {
   Send,
   UserIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
@@ -108,27 +119,399 @@ function getDaysInStageSince(updatedAt: number): number {
   return Math.floor((Date.now() - updatedAt) / (1000 * 60 * 60 * 24));
 }
 
-// ── Submission status badge ───────────────────────────────────────────────────
+// ── Pipeline stage badge ──────────────────────────────────────────────────────
 
-function SubmissionStatusBadge({ status }: { status: Submission["status"] }) {
-  const cfg: Record<string, { label: string; cls: string }> = {
-    pending: { label: "Pending", cls: "bg-muted text-muted-foreground" },
-    approved: { label: "Approved", cls: "bg-[#22c55e]/10 text-[#22c55e]" },
-    rejected: { label: "Rejected", cls: "bg-[#ef4444]/10 text-[#ef4444]" },
-    interview: { label: "Interview", cls: "bg-blue-500/10 text-blue-400" },
-    offer: { label: "Offer", cls: "bg-[#eab308]/10 text-[#eab308]" },
-    placed: { label: "Placed", cls: "bg-[#22c55e]/10 text-[#22c55e]" },
-  };
-  const c = cfg[status] ?? cfg.pending;
+function PipelineStageBadge({
+  stage,
+}: { stage: SubmissionPipelineStage | undefined }) {
+  if (!stage)
+    return <span className="text-[10px] text-muted-foreground">—</span>;
+  const color = PIPELINE_STAGE_COLORS[stage] ?? "#6b7280";
+  const label = PIPELINE_STAGE_LABELS[stage] ?? stage;
   return (
     <span
-      className={cn(
-        "text-[10px] font-semibold px-1.5 py-0.5 rounded-sm",
-        c.cls,
-      )}
+      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm border"
+      style={{
+        color,
+        borderColor: `${color}40`,
+        backgroundColor: `${color}15`,
+      }}
     >
-      {c.label}
+      {label}
     </span>
+  );
+}
+
+// ── Rejection reason modal ────────────────────────────────────────────────────
+
+interface RejectionModalProps {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+}
+
+function RejectionModal({ open, onClose, onConfirm }: RejectionModalProps) {
+  const [reason, setReason] = useState("");
+  const REASONS = [
+    "Not a skill fit",
+    "Overqualified",
+    "Salary expectation mismatch",
+    "Client declined",
+    "Candidate withdrew",
+    "Position closed",
+    "Failed background check",
+    "Other",
+  ];
+
+  function handleConfirm() {
+    if (!reason.trim()) {
+      toast.error("Please select or enter a rejection reason");
+      return;
+    }
+    onConfirm(reason);
+    setReason("");
+    onClose();
+  }
+
+  return (
+    <AppModal
+      open={open}
+      onOpenChange={onClose}
+      title="Rejection Reason"
+      size="sm"
+    >
+      <div className="space-y-3" data-ocid="rejection-modal">
+        <div className="space-y-1">
+          <Label className="text-xs">Reason *</Label>
+          <Select onValueChange={setReason} value={reason}>
+            <SelectTrigger
+              className="h-8 text-xs"
+              data-ocid="rejection-reason-select"
+            >
+              <SelectValue placeholder="Select a reason..." />
+            </SelectTrigger>
+            <SelectContent>
+              {REASONS.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Additional notes (optional)</Label>
+          <Textarea
+            value={
+              reason.startsWith("Other")
+                ? reason.replace("Other", "").trim()
+                : ""
+            }
+            onChange={(e) => setReason(`Other: ${e.target.value}`)}
+            placeholder="Explain further..."
+            className="text-xs resize-none h-16"
+            data-ocid="rejection-notes-input"
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onClose}
+            className="h-7 text-xs"
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 text-xs bg-[#ef4444] hover:bg-[#dc2626] text-white"
+            onClick={handleConfirm}
+            data-ocid="rejection-confirm-btn"
+          >
+            Confirm Rejection
+          </Button>
+        </div>
+      </div>
+    </AppModal>
+  );
+}
+
+// ── Active Submissions table ──────────────────────────────────────────────────
+
+interface ActiveSubmissionsProps {
+  candidateId: string;
+  resumeId?: string;
+}
+
+function ActiveSubmissionsSection({
+  candidateId,
+  resumeId,
+}: ActiveSubmissionsProps) {
+  const { data: submissionsByCandidate = [], isLoading: loadingByCandidate } =
+    useSubmissionsForCandidate(candidateId);
+  const { data: submissionsByResume = [], isLoading: loadingByResume } =
+    useSubmissionsForResume(resumeId ?? "");
+  const { data: jobs = [] } = useJobs();
+  const { data: clients = [] } = useClients();
+  const { data: vendors = [] } = useVendors();
+  const updateStage = useUpdateSubmissionStage();
+
+  const [showSubmit, setShowSubmit] = useState(false);
+  const [rejectionTarget, setRejectionTarget] = useState<{
+    submissionId: string;
+    nextStage: SubmissionPipelineStage;
+  } | null>(null);
+
+  const isLoading = loadingByCandidate || (!!resumeId && loadingByResume);
+
+  // Deduplicate merged submissions by id
+  const submissions = useMemo(() => {
+    const seen = new Set<string>();
+    const merged = [...submissionsByCandidate, ...submissionsByResume];
+    return merged.filter((s) => {
+      if (seen.has(s.id)) return false;
+      seen.add(s.id);
+      return true;
+    });
+  }, [submissionsByCandidate, submissionsByResume]);
+
+  // Build lookup maps for joined display
+  const jobMap = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
+  const clientMap = useMemo(
+    () => new Map(clients.map((c) => [c.id, c])),
+    [clients],
+  );
+  const vendorMap = useMemo(
+    () => new Map(vendors.map((v) => [v.id, v])),
+    [vendors],
+  );
+
+  async function handleStageChange(
+    sub: Submission,
+    nextStage: SubmissionPipelineStage,
+  ) {
+    if (nextStage === "rejected") {
+      setRejectionTarget({ submissionId: sub.id, nextStage });
+      return;
+    }
+    try {
+      await updateStage.mutateAsync({
+        id: sub.id,
+        update: { stage: nextStage },
+      });
+      toast.success(`Stage updated to ${PIPELINE_STAGE_LABELS[nextStage]}`);
+    } catch {
+      toast.error("Failed to update stage");
+    }
+  }
+
+  async function handleRejectionConfirm(reason: string) {
+    if (!rejectionTarget) return;
+    try {
+      await updateStage.mutateAsync({
+        id: rejectionTarget.submissionId,
+        update: { stage: "rejected", rejectionReason: reason },
+      });
+      toast.success("Submission rejected");
+    } catch {
+      toast.error("Failed to reject submission");
+    }
+    setRejectionTarget(null);
+  }
+
+  return (
+    <>
+      <div className="p-4 space-y-3" data-ocid="submissions-section">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+            <Send className="w-3.5 h-3.5 text-muted-foreground" />
+            Active Submissions
+            <Badge variant="secondary" className="text-[10px] h-4 px-1">
+              {submissions.length}
+            </Badge>
+          </p>
+          <Button
+            size="sm"
+            className="h-6 text-[10px] gap-1 px-2"
+            onClick={() => setShowSubmit(true)}
+            data-ocid="submit-to-job-btn"
+          >
+            <Plus className="w-3 h-3" />
+            Submit to Job
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : submissions.length === 0 ? (
+          <div
+            className="rounded-sm border border-dashed border-border/60 p-4 text-center"
+            data-ocid="submissions-empty-state"
+          >
+            <Send className="w-6 h-6 text-muted-foreground/30 mx-auto mb-2" />
+            <p className="text-xs text-muted-foreground">
+              No active submissions for this candidate.
+            </p>
+            <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+              Use "Submit to Job" on the Resumes page to get started.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-sm border border-border overflow-hidden">
+            {/* Table header */}
+            <div className="grid grid-cols-[1fr_100px_110px_60px_100px_110px] gap-0 bg-muted/50 border-b border-border px-3 py-1.5">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Job Title
+              </span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Client
+              </span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Stage
+              </span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider text-right">
+                Days
+              </span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Vendor
+              </span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Action
+              </span>
+            </div>
+            {/* Rows */}
+            {submissions.map((sub) => {
+              const job = jobMap.get(sub.jobId);
+              const client = job ? clientMap.get(job.clientId) : undefined;
+              const vendor = sub.vendorId
+                ? vendorMap.get(sub.vendorId)
+                : undefined;
+              const currentStage = sub.pipelineStage;
+              const nextStages: SubmissionPipelineStage[] = currentStage
+                ? (ALLOWED_STAGE_TRANSITIONS[currentStage] ?? [])
+                : [];
+
+              const clientName =
+                client?.name ?? sub.clientName ?? job?.clientName ?? "—";
+              const vendorName = vendor?.name ?? "—";
+              const jobTitle = job?.title ?? sub.jobTitle ?? "Unknown Job";
+
+              return (
+                <div
+                  key={sub.id}
+                  className="grid grid-cols-[1fr_100px_110px_60px_100px_110px] gap-0 px-3 py-2 border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors"
+                  data-ocid="submission-row"
+                >
+                  {/* Job Title */}
+                  <div className="min-w-0 pr-2 flex items-center">
+                    {job ? (
+                      <Link
+                        to="/jobs"
+                        className="text-xs font-medium text-primary hover:underline truncate block"
+                      >
+                        {jobTitle}
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-foreground truncate">
+                        {jobTitle}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Client */}
+                  <div className="min-w-0 flex items-center">
+                    <span className="text-[11px] text-muted-foreground truncate">
+                      {clientName}
+                    </span>
+                  </div>
+
+                  {/* Stage badge */}
+                  <div className="flex items-center">
+                    <PipelineStageBadge stage={currentStage} />
+                  </div>
+
+                  {/* Days in stage */}
+                  <div className="flex items-center justify-end">
+                    <span
+                      className={cn(
+                        "text-[11px] font-medium",
+                        sub.daysInStage > 7
+                          ? "text-[#ef4444]"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {sub.daysInStage}d
+                    </span>
+                  </div>
+
+                  {/* Source Vendor */}
+                  <div className="min-w-0 flex items-center">
+                    <span className="text-[11px] text-muted-foreground truncate">
+                      {vendorName}
+                    </span>
+                  </div>
+
+                  {/* Action dropdown */}
+                  <div className="flex items-center">
+                    {nextStages.length > 0 ? (
+                      <Select
+                        onValueChange={(v) =>
+                          handleStageChange(sub, v as SubmissionPipelineStage)
+                        }
+                        value=""
+                      >
+                        <SelectTrigger
+                          className="h-6 text-[10px] w-[100px]"
+                          data-ocid="stage-action-select"
+                        >
+                          <SelectValue placeholder="Move to…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {nextStages.map((s) => (
+                            <SelectItem key={s} value={s}>
+                              <span
+                                className="flex items-center gap-1.5"
+                                style={{ color: PIPELINE_STAGE_COLORS[s] }}
+                              >
+                                {s === "rejected" ? "✕ " : "→ "}
+                                {PIPELINE_STAGE_LABELS[s]}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground/50 italic">
+                        {currentStage === "onboarding"
+                          ? "Final stage"
+                          : "No actions"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <RejectionModal
+        open={!!rejectionTarget}
+        onClose={() => setRejectionTarget(null)}
+        onConfirm={handleRejectionConfirm}
+      />
+
+      <SubmitJobModal
+        open={showSubmit}
+        onClose={() => setShowSubmit(false)}
+        candidateId={candidateId}
+        candidateName=""
+      />
+    </>
   );
 }
 
@@ -283,6 +666,7 @@ function EditCandidateModal({
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { isSubmitting },
   } = useForm<CandidateFormInput>({
     defaultValues: {
@@ -297,6 +681,7 @@ function EditCandidateModal({
     },
   });
   const updateCandidate = useUpdateCandidate();
+  const { data: vendors = [] } = useVendors();
 
   async function onSubmit(data: CandidateFormInput) {
     try {
@@ -353,6 +738,35 @@ function EditCandidateModal({
             {...register("skills")}
             className="text-xs resize-none h-16"
           />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">
+            Vendor{" "}
+            <span className="text-muted-foreground font-normal">
+              (which vendor is processing this profile)
+            </span>
+          </Label>
+          <Select
+            onValueChange={(v) =>
+              setValue("vendorId", v === "__none__" ? undefined : v)
+            }
+          >
+            <SelectTrigger
+              className="h-8 text-xs"
+              data-ocid="edit-vendor-select"
+            >
+              <SelectValue placeholder="Select vendor (optional)…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">— None —</SelectItem>
+              {vendors.map((v) => (
+                <SelectItem key={v.id} value={v.id}>
+                  {v.name}
+                  {v.company ? ` · ${v.company}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
@@ -537,13 +951,10 @@ export default function CandidateDetailPage() {
   const { data: candidates = [], isLoading } = useCandidates();
   const { data: activities = [], isLoading: loadingActivities } =
     useActivities(candidateId);
-  const { data: submissions = [], isLoading: loadingSubmissions } =
-    useSubmissionsForCandidate(candidateId);
   const { data: followUps = [] } = useFollowUps();
   const updateFollowUp = useUpdateFollowUpStatus();
 
   const [showEdit, setShowEdit] = useState(false);
-  const [showSubmit, setShowSubmit] = useState(false);
 
   const candidate = candidates.find((c) => c.id === candidateId);
 
@@ -780,83 +1191,10 @@ export default function CandidateDetailPage() {
             </div>
           </div>
 
-          {/* Right column — activity + submissions */}
+          {/* Right column — submissions + activity */}
           <div className="lg:col-span-2 flex flex-col divide-y divide-border">
-            {/* Submissions section */}
-            <div className="p-4 space-y-3" data-ocid="submissions-section">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Send className="w-3.5 h-3.5 text-muted-foreground" />
-                  Submissions
-                  <Badge variant="secondary" className="text-[10px] h-4 px-1">
-                    {submissions.length}
-                  </Badge>
-                </p>
-                <Button
-                  size="sm"
-                  className="h-6 text-[10px] gap-1 px-2"
-                  onClick={() => setShowSubmit(true)}
-                  data-ocid="submit-to-job-btn"
-                >
-                  <Plus className="w-3 h-3" />
-                  Submit to Job
-                </Button>
-              </div>
-
-              {loadingSubmissions ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-full" />
-                </div>
-              ) : submissions.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-2">
-                  No submissions yet. Submit this candidate to an open job.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {submissions.map((sub) => (
-                    <div
-                      key={sub.id}
-                      className="rounded-sm border border-border p-2.5 bg-card space-y-1"
-                      data-ocid="submission-card"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-foreground truncate">
-                            {sub.jobTitle ?? "Unknown Job"}
-                          </p>
-                          {sub.vendorId && (
-                            <p className="text-[10px] text-muted-foreground">
-                              Vendor: {sub.vendorId}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <SubmissionStatusBadge status={sub.status} />
-                          {sub.approvedBy && (
-                            <span className="text-[10px] text-[#22c55e]">
-                              ✓ Approved
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                        {sub.rateProposed && (
-                          <span className="flex items-center gap-0.5">
-                            <DollarSign className="w-2.5 h-2.5" />$
-                            {sub.rateProposed}/hr
-                            {sub.rateProposed > RATE_APPROVAL_THRESHOLD && (
-                              <Lock className="w-2.5 h-2.5 text-[#eab308] ml-0.5" />
-                            )}
-                          </span>
-                        )}
-                        <span>{getRelativeTime(sub.submittedAt)}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            {/* Active Submissions section */}
+            <ActiveSubmissionsSection candidateId={candidateId} />
 
             {/* Interviews section */}
             <div className="p-4 space-y-3" data-ocid="interviews-section">
@@ -999,12 +1337,6 @@ export default function CandidateDetailPage() {
           candidate={candidate}
         />
       )}
-      <SubmitJobModal
-        open={showSubmit}
-        onClose={() => setShowSubmit(false)}
-        candidateId={candidateId}
-        candidateName={candidate.name}
-      />
     </div>
   );
 }

@@ -26,6 +26,98 @@ export type SubmissionStatus =
   | "offer"
   | "placed";
 
+// ── 10-Stage Submission Pipeline ─────────────────────────────────────────────
+
+/** String union of all valid submission pipeline stage keys. */
+export type SubmissionPipelineStage =
+  | "resume_sent"
+  | "internal_screening"
+  | "submitted_to_client"
+  | "client_screening"
+  | "client_interview"
+  | "offer_extended"
+  | "offer_accepted"
+  | "placed"
+  | "onboarding"
+  | "rejected";
+
+export const PIPELINE_STAGES = [
+  "resume_sent",
+  "internal_screening",
+  "submitted_to_client",
+  "client_screening",
+  "client_interview",
+  "offer_extended",
+  "offer_accepted",
+  "placed",
+  "onboarding",
+  "rejected",
+] as const satisfies readonly SubmissionPipelineStage[];
+
+export const PIPELINE_STAGE_LABELS: Record<SubmissionPipelineStage, string> = {
+  resume_sent: "Resume Sent",
+  internal_screening: "Internal Screening",
+  submitted_to_client: "Submitted to Client",
+  client_screening: "Client Screening",
+  client_interview: "Client Interview",
+  offer_extended: "Offer Extended",
+  offer_accepted: "Offer Accepted",
+  placed: "Placed",
+  onboarding: "Onboarding",
+  rejected: "Rejected",
+};
+
+export const PIPELINE_STAGE_COLORS: Record<SubmissionPipelineStage, string> = {
+  resume_sent: "#6366f1",
+  internal_screening: "#8b5cf6",
+  submitted_to_client: "#3b82f6",
+  client_screening: "#06b6d4",
+  client_interview: "#f59e0b",
+  offer_extended: "#f97316",
+  offer_accepted: "#10b981",
+  placed: "#059669",
+  onboarding: "#84cc16",
+  rejected: "#ef4444",
+};
+
+/** Valid next stages for each pipeline stage. No skipping forward; rejected can return. */
+export const ALLOWED_STAGE_TRANSITIONS: Record<
+  SubmissionPipelineStage,
+  SubmissionPipelineStage[]
+> = {
+  resume_sent: ["internal_screening", "rejected"],
+  internal_screening: ["submitted_to_client", "rejected"],
+  submitted_to_client: ["client_screening", "rejected"],
+  client_screening: ["client_interview", "rejected"],
+  client_interview: ["offer_extended", "rejected"],
+  offer_extended: ["offer_accepted", "rejected"],
+  offer_accepted: ["placed", "rejected"],
+  placed: ["onboarding"],
+  onboarding: [],
+  rejected: [
+    "resume_sent",
+    "internal_screening",
+    "submitted_to_client",
+    "client_screening",
+    "client_interview",
+  ],
+};
+
+// ── Submission History ────────────────────────────────────────────────────────
+
+export interface SubmissionHistory {
+  id: string;
+  submissionId: string;
+  fromStage: SubmissionPipelineStage | undefined;
+  toStage: SubmissionPipelineStage;
+  changedAt: string;
+  changedBy: string | undefined;
+  rejectionReason: string | undefined;
+  notes: string | undefined;
+}
+
+// ── Entities ──────────────────────────────────────────────────────────────────
+
 export interface Vendor {
   id: string;
   name: string;
@@ -144,27 +236,35 @@ export interface Job {
 export interface Submission {
   id: string;
   candidateId: string;
-  candidateName?: string;
+  candidateName: string | undefined;
   jobId: string;
-  jobTitle?: string;
-  vendorId?: string;
+  jobTitle: string | undefined;
+  clientName: string | undefined;
+  vendorId: string | undefined;
+  /** ID of the resume this submission is based on */
+  resumeId: string | undefined;
   submittedBy?: string;
   rateProposed?: number;
+  /** @deprecated Use pipelineStage instead */
   status: SubmissionStatus;
   submittedAt: number;
   approvedBy?: string;
-  pipelineStage?: string;
+  /** Current pipeline stage key — this is the source of truth */
+  pipelineStage: SubmissionPipelineStage;
+  /** History of all stage transitions */
+  pipelineHistory: SubmissionHistory[];
+  rejectionReason: string | undefined;
+  notes: string | undefined;
+  deletedAt: string | undefined;
+  lastStageChangeAt: string | undefined;
+  /** Computed: days since last stage change (or since creation) */
+  daysInStage: number;
 }
 
-export const PIPELINE_STAGES = [
-  "Resume Sent",
-  "Screening Round",
-  "Selected",
-  "Client Round",
-  "Final Onboarding",
-] as const;
-
-export type PipelineStageValue = (typeof PIPELINE_STAGES)[number];
+// ── Pipeline Stage (entity pipeline config, not submission stage) ─────────────
+// NOTE: This interface represents a configurable pipeline stage definition
+// for entity types (vendor/client/recruiter/candidate). It is distinct from
+// SubmissionPipelineStage which is the 10-stage submission string union.
 
 export interface PipelineStage {
   id: string;
@@ -284,23 +384,63 @@ export interface BenchMatch extends BenchRecord {
   matchScore: number;
 }
 
+// ── Pipeline History Entry ─────────────────────────────────────────────────────
+
+export interface PipelineHistoryEntry {
+  fromStage: SubmissionPipelineStage;
+  toStage: SubmissionPipelineStage;
+  changedAt: number;
+  changedBy: string;
+}
+
 // ── Resumes ────────────────────────────────────────────────────────────────────
 
 export interface Resume {
   id: string;
   fileName: string;
-  fileUrl?: string;
+  fileUrl: string | undefined;
   candidateName: string;
-  extractedSkills: string;
+  email: string | undefined;
+  phone: string | undefined;
+  /** Skills as an array of strings */
+  extractedSkills: string[];
   extractedExperience: string;
   extractedRole: string;
   rawText: string;
   createdAt: string;
+  /** ID of existing resume if this is a duplicate */
+  duplicateOf: string | undefined;
+  status: "pending" | "active" | "duplicate" | "archived";
+  availability:
+    | "immediate"
+    | "two_weeks"
+    | "one_month"
+    | "unavailable"
+    | undefined;
+  /** Years of experience parsed from resume */
+  yearsExperience: number | undefined;
+  /** Location extracted from resume */
+  location: string | undefined;
+  /** Vendor who sourced / provided this resume */
+  sourceVendorId: string | undefined;
 }
 
 export interface ResumeMatch {
-  job: Job;
-  matchScore: number;
-  matchedKeywords: string[];
-  benchMatchName?: string;
+  jobId: string;
+  jobTitle: string;
+  clientName: string;
+  totalScore: number;
+  skillsScore: number;
+  expScore: number;
+  rateScore: number;
+  availScore: number;
+  matchedSkills: string[];
+  missingSkills: string[];
+}
+
+// ── Client Job Link ───────────────────────────────────────────────────────────
+
+export interface ClientJobLink {
+  jobId: string;
+  linkedAt: string;
 }

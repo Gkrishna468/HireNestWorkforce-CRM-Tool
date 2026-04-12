@@ -1,4 +1,4 @@
-// Version: 1.0.0
+// Version: 3.0.0
 type Activity__481333239 =
   {
     activityType : Text;
@@ -79,6 +79,7 @@ type Client__867095841 =
   };
 type Data__791452850<K, V> =
   {var count : Nat__490723111; kvs : [var ?(K, V)]};
+type EntityId__507176642 = EntityId__892221652;
 type EntityId__892221652 = Text;
 type EntityId__970249480 = EntityId__892221652;
 type EntityType__486211478 = {#candidate; #client; #recruiter; #vendor};
@@ -113,10 +114,34 @@ type Job__351843346 =
     title : Text
   };
 type Leaf__809889148<K, V> = {data : Data__791452850<K, V>};
+type List__415060402<T> = List__790383201<T>;
+type List__790383201<T> =
+  {
+    var blockIndex : Nat__490723111;
+    var blocks : [var [var ?T]];
+    var elementIndex : Nat__490723111
+  };
 type Nat__490723111 = Nat__920180692;
 type Nat__920180692 = Nat;
 type Node__46230540<K, V> =
   {#internal : Internal__8484328<K, V>; #leaf : Leaf__809889148<K, V>};
+type OldEntityId__840561559 = Text;
+type OldSubmission__260115647 =
+  {
+    approvedAt : ?OldTimestamp__27916213;
+    approvedBy : ?Text;
+    candidateId : OldEntityId__840561559;
+    id : OldEntityId__840561559;
+    jobId : OldEntityId__840561559;
+    rateProposed : Float;
+    status : Text;
+    submittedAt : OldTimestamp__27916213;
+    submittedBy : Text;
+    vendorId : ?OldEntityId__840561559
+  };
+type OldTimestamp__27916213 = Int;
+type PipelineHistoryEntry__658323752 =
+  {changedAt : Int; changedBy : Text; fromStage : Text; toStage : Text};
 type RecruiterMetrics__279093250 =
   {
     callsMade : Nat;
@@ -147,20 +172,42 @@ type Recruiter__456075536 =
     submissionsToday : Nat;
     tasksCompleted : Nat
   };
-type Submission__998287609 =
+type Resume__498444623 =
   {
-    approvedAt : ?Timestamp__484788618;
+    candidateName : Text;
+    createdAt : Timestamp__322452665;
+    email : ?Text;
+    extractedExperience : Text;
+    extractedRole : Text;
+    extractedSkills : [Text];
+    fileName : Text;
+    fileUrl : Text;
+    id : EntityId__507176642;
+    location : ?Text;
+    phone : ?Text;
+    rawText : Text;
+    sourceVendorId : ?EntityId__507176642;
+    yearsExperience : ?Int
+  };
+type SubmissionPipelineStage__367778783 = Text;
+type Submission__820755352 =
+  {
+    approvedAt : ?Timestamp__322452665;
     approvedBy : ?Text;
-    candidateId : EntityId__970249480;
-    id : EntityId__970249480;
-    jobId : EntityId__970249480;
+    candidateId : EntityId__507176642;
+    id : EntityId__507176642;
+    jobId : EntityId__507176642;
+    notes : ?Text;
+    pipelineHistory : [PipelineHistoryEntry__658323752];
+    pipelineStage : SubmissionPipelineStage__367778783;
     rateProposed : Float;
-    status : Text;
-    submittedAt : Timestamp__484788618;
+    resumeId : ?EntityId__507176642;
+    submittedAt : Timestamp__322452665;
     submittedBy : Text;
-    vendorId : ?EntityId__970249480
+    vendorId : ?EntityId__507176642
   };
 type Timestamp__301639476 = Int;
+type Timestamp__322452665 = Timestamp__301639476;
 type Timestamp__484788618 = Timestamp__301639476;
 type VendorMetrics__322375507 =
   {
@@ -196,7 +243,7 @@ type Vendor__315102645 =
     submissions : Nat;
     submissionsAccepted : Nat
   };
-actor {
+actor ({
   stable activities :
     {
       var blockIndex : Nat__490723111;
@@ -248,10 +295,84 @@ actor {
       var root : Node__46230540<Text, Recruiter__456075536>;
       var size : Nat__490723111
     };
+  stable resumes :
+    {
+      var root : Node__46230540<Text, Resume__498444623>;
+      var size : Nat__490723111
+    };
+  in submissions : List__415060402<OldSubmission__260115647>;
+  stable vendorMetrics :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?VendorMetrics__322375507]];
+      var elementIndex : Nat__490723111
+    };
+  stable vendors :
+    {
+      var root : Node__46230540<Text, Vendor__315102645>;
+      var size : Nat__490723111
+    }
+}, {
+  stable activities :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?Activity__481333239]];
+      var elementIndex : Nat__490723111
+    };
+  stable approvals :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?ApprovalItem__425259888]];
+      var elementIndex : Nat__490723111
+    };
+  stable benchCounter : [var Nat];
+  stable benchRecords :
+    {
+      var root : Node__46230540<Nat, BenchRecord__352649880>;
+      var size : Nat__490723111
+    };
+  stable candidates :
+    {
+      var root : Node__46230540<Text, Candidate__805010502>;
+      var size : Nat__490723111
+    };
+  stable clients :
+    {
+      var root : Node__46230540<Text, Client__867095841>;
+      var size : Nat__490723111
+    };
+  stable followUps :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?FollowUp__622386448]];
+      var elementIndex : Nat__490723111
+    };
+  stable var idCounter : Nat;
+  stable jobs :
+    {
+      var root : Node__46230540<Text, Job__351843346>;
+      var size : Nat__490723111
+    };
+  stable recruiterMetrics :
+    {
+      var blockIndex : Nat__490723111;
+      var blocks : [var [var ?RecruiterMetrics__279093250]];
+      var elementIndex : Nat__490723111
+    };
+  stable recruiters :
+    {
+      var root : Node__46230540<Text, Recruiter__456075536>;
+      var size : Nat__490723111
+    };
+  stable resumes :
+    {
+      var root : Node__46230540<Text, Resume__498444623>;
+      var size : Nat__490723111
+    };
   stable submissions :
     {
       var blockIndex : Nat__490723111;
-      var blocks : [var [var ?Submission__998287609]];
+      var blocks : [var [var ?Submission__820755352]];
       var elementIndex : Nat__490723111
     };
   stable vendorMetrics :
@@ -265,4 +386,4 @@ actor {
       var root : Node__46230540<Text, Vendor__315102645>;
       var size : Nat__490723111
     }
-};
+}) ;

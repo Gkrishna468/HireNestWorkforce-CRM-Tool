@@ -1,3 +1,5 @@
+import type { SubmissionPipelineStage } from "./crm";
+
 export interface VendorFormInput {
   name: string;
   email: string;
@@ -38,6 +40,8 @@ export interface CandidateFormInput {
   salaryMax?: number;
   notes?: string;
   assignedRecruiter?: string;
+  /** Which vendor is processing / submitted this candidate */
+  vendorId?: string;
 }
 
 export interface ActivityFormInput {
@@ -77,8 +81,36 @@ export interface SubmissionFormInput {
   candidateId: string;
   jobId: string;
   vendorId?: string;
+  /** Resume this submission is based on — submissions table is source of truth */
+  resumeId?: string;
+  /** Initial pipeline stage — defaults to 'resume_sent' */
+  pipelineStage?: SubmissionPipelineStage;
+  notes?: string;
   submittedBy?: string;
   rateProposed?: number;
+}
+
+export interface SubmissionUpdateInput {
+  stage: SubmissionPipelineStage;
+  rejectionReason?: string;
+  notes?: string;
+}
+
+export interface ResumeFormInput {
+  fileName: string;
+  fileUrl?: string;
+  candidateName: string;
+  email?: string;
+  phone?: string;
+  extractedSkills: string[];
+  extractedExperience: string;
+  extractedRole: string;
+  rawText?: string;
+  status: "active";
+  availability?: string;
+  yearsExperience?: number;
+  location?: string;
+  sourceVendorId?: string;
 }
 
 export interface FollowUpFormInput {
