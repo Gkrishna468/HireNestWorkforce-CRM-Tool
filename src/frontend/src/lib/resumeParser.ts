@@ -22,26 +22,57 @@ export function extractNameFromFilename(filename: string): string {
   return first.charAt(0).toUpperCase() + first.slice(1);
 }
 
-/** Replace Unicode "smart" punctuation and non-ASCII with safe ASCII equivalents */
+/**
+ * Sanitize text for safe Postgres storage.
+ * - Removes null bytes and control characters (PostgreSQL rejects these)
+ * - Replaces smart quotes / em-dashes / ellipsis with ASCII equivalents
+ * - Removes zero-width spaces
+ * - Normalizes Unicode to NFC
+ * - Does NOT strip all > 0x7F characters (preserves accented letters in names)
+ */
 export function sanitizeText(text: string): string {
-  return (
-    text
-      // Smart single quotes
-      .replace(/[\u2018\u2019]/g, "'")
-      // Smart double quotes
-      .replace(/[\u201C\u201D]/g, '"')
-      // Em dash
-      .replace(/\u2014/g, "--")
-      // En dash
-      .replace(/\u2013/g, "-")
-      // Bullets
-      .replace(/[\u2022\u25AA\u25CF]/g, "*")
-      // Ellipsis
-      .replace(/\u2026/g, "...")
-      // Remove any remaining non-ASCII characters (> 0x7F)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional
-      .replace(/[^\x00-\x7F]/g, "")
-  );
+  if (!text || typeof text !== "string") return "";
+  // Step 1: replace problematic Unicode with ASCII equivalents
+  let result = text
+    // Smart single quotes → straight apostrophe
+    .replace(/[\u2018\u2019]/g, "'")
+    // Smart double quotes → straight double quote
+    .replace(/[\u201C\u201D]/g, '"')
+    // Em dash → hyphen
+    .replace(/\u2014/g, "-")
+    // En dash → hyphen
+    .replace(/\u2013/g, "-")
+    // Bullets (separate replacements to avoid multi-codepoint class issues)
+    .replace(/\u2022/g, "*")
+    .replace(/\u25AA/g, "*")
+    .replace(/\u25CF/g, "*")
+    // Ellipsis
+    .replace(/\u2026/g, "...")
+    // Zero-width spaces / BOM (separate replacements to satisfy linter)
+    .replace(/\u200B/g, "")
+    .replace(/\u200C/g, "")
+    .replace(/\u200D/g, "")
+    .replace(/\uFEFF/g, "");
+
+  // Step 2: remove null bytes and control characters using charCodeAt
+  // (avoids biome lint errors on regex control character ranges)
+  result = Array.from(result)
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      // Allow: printable ASCII (32–126), newline (10), carriage return (13), tab (9)
+      // Allow: non-ASCII printable (>= 160) to preserve accented names
+      return (
+        code === 9 ||
+        code === 10 ||
+        code === 13 ||
+        (code >= 32 && code <= 126) ||
+        code >= 160
+      );
+    })
+    .join("");
+
+  // Step 3: Normalize Unicode composition (NFC)
+  return result.normalize("NFC");
 }
 
 // ── DOCX text extraction ──────────────────────────────────────────────────────

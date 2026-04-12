@@ -13,6 +13,12 @@
 -- Enable trigram similarity extension (required for similarity() function):
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
+-- Name-primary matching (phone/skills kept for backward compat but weighted low).
+-- Weights: name 60%, phone 30%, skills overlap 10%.
+-- Filter: similarity_score >= 30.
+-- Fixed: explicit ::TEXT[] casts to avoid array_length(text, integer) errors.
+DROP FUNCTION IF EXISTS find_similar_candidates(TEXT, TEXT, TEXT[]);
+
 CREATE OR REPLACE FUNCTION find_similar_candidates(
   input_name TEXT,
   input_phone TEXT,
@@ -33,6 +39,7 @@ AS $$
 DECLARE
   phone_clean TEXT := regexp_replace(COALESCE(input_phone, ''), '[^0-9]', '', 'g');
   name_lower  TEXT := lower(COALESCE(input_name, ''));
+  skills_arr  TEXT[] := COALESCE(input_skills::TEXT[], ARRAY[]::TEXT[]);
 BEGIN
   RETURN QUERY
   SELECT
@@ -43,32 +50,48 @@ BEGIN
     r.extracted_skills,
     r.extracted_role,
     ROUND((
-      (similarity(lower(COALESCE(r.candidate_name,'')), name_lower) * 40)
-      + CASE WHEN phone_clean <> '' AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean THEN 35 ELSE 0 END
-      + CASE WHEN array_length(input_skills, 1) > 0 AND array_length(r.extracted_skills, 1) > 0
-             THEN ROUND(
-                (SELECT COUNT(*) FROM unnest(input_skills) s WHERE lower(s) = ANY(SELECT lower(x) FROM unnest(r.extracted_skills) x))::NUMERIC
-                / GREATEST(array_length(input_skills,1), array_length(r.extracted_skills,1)) * 25
-             )
-             ELSE 0 END
+      -- Name similarity: 60 points
+      (similarity(lower(COALESCE(r.candidate_name,'')), name_lower) * 60)
+      -- Phone match: 30 points
+      + CASE
+          WHEN phone_clean <> ''
+            AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean
+          THEN 30
+          ELSE 0
+        END
+      -- Skills overlap: 10 points
+      + CASE
+          WHEN array_length(skills_arr, 1) > 0
+            AND array_length(COALESCE(r.extracted_skills::TEXT[], ARRAY[]::TEXT[]), 1) > 0
+          THEN ROUND(
+            (SELECT COUNT(*) FROM unnest(skills_arr) s
+             WHERE lower(s) = ANY(
+               SELECT lower(x) FROM unnest(COALESCE(r.extracted_skills::TEXT[], ARRAY[]::TEXT[])) x
+             ))::NUMERIC
+            / GREATEST(
+                array_length(skills_arr, 1),
+                array_length(COALESCE(r.extracted_skills::TEXT[], ARRAY[]::TEXT[]), 1)
+              ) * 10
+          )
+          ELSE 0
+        END
     )::NUMERIC, 0) AS similarity_score,
     ARRAY_REMOVE(ARRAY[
-      CASE WHEN similarity(lower(COALESCE(r.candidate_name,'')), name_lower) > 0.4 THEN 'Name match' ELSE NULL END,
-      CASE WHEN phone_clean <> '' AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean THEN 'Phone match' ELSE NULL END,
-      CASE WHEN array_length(input_skills,1) > 0 AND (
-        SELECT COUNT(*) FROM unnest(input_skills) s WHERE lower(s) = ANY(SELECT lower(x) FROM unnest(r.extracted_skills) x)
-      ) > 0 THEN 'Skills overlap' ELSE NULL END
+      CASE WHEN similarity(lower(COALESCE(r.candidate_name,'')), name_lower) > 0.3
+           THEN 'Name match' ELSE NULL END,
+      CASE WHEN phone_clean <> ''
+             AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean
+           THEN 'Phone match' ELSE NULL END,
+      CASE WHEN array_length(skills_arr, 1) > 0
+             AND (SELECT COUNT(*) FROM unnest(skills_arr) s
+                  WHERE lower(s) = ANY(
+                    SELECT lower(x) FROM unnest(COALESCE(r.extracted_skills::TEXT[], ARRAY[]::TEXT[])) x
+                  )) > 0
+           THEN 'Skills overlap' ELSE NULL END
     ], NULL) AS match_reasons
   FROM resumes r
   WHERE r.status <> 'archived'
-    AND (
-      similarity(lower(COALESCE(r.candidate_name,'')), name_lower) > 0.3
-      OR (phone_clean <> '' AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean)
-      OR (
-        array_length(input_skills,1) > 0 AND array_length(r.extracted_skills,1) > 0
-        AND (SELECT COUNT(*) FROM unnest(input_skills) s WHERE lower(s) = ANY(SELECT lower(x) FROM unnest(r.extracted_skills) x)) > 1
-      )
-    )
+    AND similarity(lower(COALESCE(r.candidate_name,'')), name_lower) > 0.3
   ORDER BY similarity_score DESC
   LIMIT 5;
 END;
@@ -1325,37 +1348,72 @@ export async function createResume(input: {
   location?: string;
   sourceVendorId?: string;
 }): Promise<Resume> {
-  // Sanitize rawText to strip Unicode escape sequences before DB insert
-  const sanitizedRawText = sanitizeText(input.rawText);
+  // ── Sanitize helper (applied to every text field) ───────────────────────────
+  function sanitizeForPostgres(val: unknown): string {
+    if (!val || typeof val !== "string") return "";
+    return sanitizeText(val);
+  }
+
+  // ── Fix 2: skills array guard — handles array, string, or object shapes ─────
+  function toSkillsArray(raw: unknown): string[] {
+    if (Array.isArray(raw))
+      return raw.map((s) => sanitizeForPostgres(String(s))).filter(Boolean);
+    if (typeof raw === "string")
+      return raw
+        .split(",")
+        .map((s) => sanitizeForPostgres(s.trim()))
+        .filter(Boolean);
+    if (raw && typeof raw === "object") {
+      // Handle object with numeric keys like {"0":"Salesforce","1":"Apex"}
+      return Object.values(raw as Record<string, unknown>)
+        .map((s) => sanitizeForPostgres(String(s)))
+        .filter(Boolean);
+    }
+    return [];
+  }
 
   // NOTE: If save fails, run in Supabase SQL Editor:
   // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS source_vendor_id UUID REFERENCES vendors(id);
-  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS full_name TEXT;
   // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS email TEXT;
   // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS phone TEXT;
   // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS years_experience INT;
   // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS location TEXT;
-  // ALTER TABLE resumes ALTER COLUMN extracted_skills TYPE TEXT[] USING string_to_array(extracted_skills, ',');
+  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS extracted_skills TEXT[];
+
+  const skillsArray = toSkillsArray(input.extractedSkills);
+
+  const payload = {
+    file_name: sanitizeForPostgres(input.fileName),
+    file_url: input.fileUrl ?? null,
+    candidate_name: sanitizeForPostgres(input.candidateName),
+    email: input.email ? sanitizeForPostgres(input.email) : null,
+    phone: input.phone ? sanitizeForPostgres(input.phone) : null,
+    // Send as JSON array — Supabase REST parses TEXT[] from JSON array
+    extracted_skills: skillsArray,
+    extracted_experience: sanitizeForPostgres(input.extractedExperience),
+    extracted_role: sanitizeForPostgres(input.extractedRole),
+    raw_text: sanitizeForPostgres(input.rawText).slice(0, 50000),
+    status: input.status ?? "active",
+    availability: input.availability ?? null,
+    duplicate_of: input.duplicateOf ?? null,
+    years_experience: input.yearsExperience ?? null,
+    location: input.location ? sanitizeForPostgres(input.location) : null,
+    source_vendor_id: input.sourceVendorId ?? null,
+  };
+
+  // Debug log — verify skills is a proper array before insert
+  console.log(
+    "[Resume Save] Skills type:",
+    typeof payload.extracted_skills,
+    Array.isArray(payload.extracted_skills),
+    payload.extracted_skills?.slice?.(0, 3),
+  );
 
   try {
-    const result = await supabaseInsert<Record<string, unknown>>("resumes", {
-      file_name: input.fileName,
-      file_url: input.fileUrl ?? null,
-      candidate_name: input.candidateName,
-      email: input.email ?? null,
-      phone: input.phone ?? null,
-      // Send as JSON array — Supabase REST parses TEXT[] from JSON array with Content-Type: application/json
-      extracted_skills: input.extractedSkills,
-      extracted_experience: input.extractedExperience,
-      extracted_role: input.extractedRole,
-      raw_text: sanitizedRawText,
-      status: input.status ?? "active",
-      availability: input.availability ?? null,
-      duplicate_of: input.duplicateOf ?? null,
-      years_experience: input.yearsExperience ?? null,
-      location: input.location ?? null,
-      source_vendor_id: input.sourceVendorId ?? null,
-    });
+    const result = await supabaseInsert<Record<string, unknown>>(
+      "resumes",
+      payload,
+    );
     return mapResumeRow(result);
   } catch (err) {
     // Detailed error logging so the exact failing column is visible in the console
@@ -1370,9 +1428,12 @@ export async function createResume(input: {
       "| code:",
       e?.code,
       "| payload skills type:",
-      typeof input.extractedSkills,
+      typeof payload.extracted_skills,
+      Array.isArray(payload.extracted_skills),
       "| sourceVendorId:",
       input.sourceVendorId ?? "(none)",
+      "| failedPayload (truncated):",
+      JSON.stringify(payload).slice(0, 500),
     );
     throw err;
   }
@@ -1481,8 +1542,10 @@ export async function findSimilarCandidates(params: {
       match_reasons: string[];
     }>("find_similar_candidates", {
       input_name: params.inputName,
-      input_phone: params.inputPhone?.replace(/\D/g, "") ?? "",
-      input_skills: params.inputSkills,
+      // Name-only matching per user preference — always pass empty string for phone/skills
+      // to avoid null parameter type errors on the RPC
+      input_phone: "",
+      input_skills: [],
     });
 
     return (rows ?? []).map(
