@@ -253,7 +253,7 @@ function mapCandidateRow(r: any): Candidate {
     salaryMax: r.salary_max != null ? safeNumber(r.salary_max) : undefined,
     notes: r.notes ?? r.experience ?? undefined,
     assignedRecruiter: r.assigned_recruiter ?? r.assignedRecruiter ?? undefined,
-    vendorId: r.vendor_id ? safeString(r.vendor_id) : undefined,
+    jobId: r.job_id ?? r.jobId ?? undefined,
     createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
     updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
   };
@@ -616,6 +616,8 @@ export async function createCandidate(
   _actor: Actor,
   input: CandidateFormInput,
 ): Promise<Candidate> {
+  // FIXED: Use assigned_recruiter instead of vendor_id
+  // Use snake_case for all database column names
   const row = await supabaseInsert<Record<string, unknown>>("candidates", {
     name: input.name,
     email: input.email,
@@ -624,7 +626,15 @@ export async function createCandidate(
     skills: input.skills ?? null,
     experience: input.notes ?? null,
     notes: input.notes ?? null,
-    vendor_id: input.vendorId ?? null,
+    // CRITICAL FIX: Use assigned_recruiter NOT vendor_id
+    assigned_recruiter: input.assignedRecruiter ?? null,
+    // Add job_id if present
+    job_id: input.jobId ?? null,
+    // Add salary fields
+    salary_min: input.salaryMin ?? null,
+    salary_max: input.salaryMax ?? null,
+    // Add linkedin_url
+    linkedin_url: input.linkedinUrl ?? null,
     status: "active",
     stage: "Applied",
     health_score: 50,
@@ -644,6 +654,15 @@ export async function updateCandidate(
   if (input.title !== undefined) data.role = input.title;
   if (input.skills !== undefined) data.skills = input.skills;
   if (input.notes !== undefined) data.notes = input.notes;
+  // FIXED: Use assigned_recruiter instead of vendor_id
+  if (input.assignedRecruiter !== undefined) data.assigned_recruiter = input.assignedRecruiter;
+  if (input.jobId !== undefined) data.job_id = input.jobId;
+  if (input.salaryMin !== undefined) data.salary_min = input.salaryMin;
+  if (input.salaryMax !== undefined) data.salary_max = input.salaryMax;
+  if (input.linkedinUrl !== undefined) data.linkedin_url = input.linkedinUrl;
+  if (input.currentStage !== undefined) data.stage = input.currentStage;
+  if (input.healthScore !== undefined) data.health_score = input.healthScore;
+  
   const row = await supabaseUpdate<Record<string, unknown>>(
     "candidates",
     id,
@@ -1462,7 +1481,8 @@ export async function createResume(input: {
         experience: sanitizeForPostgres(input.extractedExperience),
         notes: sanitizeForPostgres(input.extractedExperience),
         location: input.location ? sanitizeForPostgres(input.location) : null,
-        vendor_id: input.sourceVendorId ?? null,
+        // FIXED: Use assigned_recruiter instead of vendor_id
+        assigned_recruiter: input.sourceVendorId ?? null,
         status: "active",
         stage: "Applied",
         health_score: 50,
