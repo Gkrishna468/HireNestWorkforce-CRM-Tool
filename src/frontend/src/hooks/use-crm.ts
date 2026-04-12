@@ -883,7 +883,11 @@ export function useCreateResume() {
       checkSupabaseOrThrow();
       return api.createResume(input);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: QK.resumes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.resumes });
+      // Sync candidates list — createResume also inserts a candidate row
+      qc.invalidateQueries({ queryKey: QK.candidates });
+    },
     onError: handleMutationError,
   });
 }

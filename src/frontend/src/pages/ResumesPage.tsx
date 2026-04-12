@@ -448,7 +448,9 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [notes, setNotes] = useState("");
 
-  const openJobs = jobs.filter((j) => j.status === "open");
+  const openJobs = jobs.filter((j) =>
+    ["open", "active"].includes((j.status ?? "").toLowerCase()),
+  );
 
   async function handleSubmit() {
     if (!selectedJobId) {
@@ -512,7 +514,7 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
               <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-muted/50 border border-border">
                 <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
                 <p className="text-xs text-muted-foreground">
-                  No open jobs.{" "}
+                  No open jobs found.{" "}
                   <Link to="/jobs" className="underline text-primary">
                     Add a job
                   </Link>{" "}
@@ -567,16 +569,22 @@ function SubmitJobModal({ resume, onClose, onSubmitted }: SubmitJobModalProps) {
                 <SelectValue placeholder="Select vendor…" />
               </SelectTrigger>
               <SelectContent>
-                {vendors.map((v) => (
-                  <SelectItem key={v.id} value={v.id}>
-                    {v.name}
-                    {v.company && (
-                      <span className="ml-1.5 text-muted-foreground text-xs">
-                        · {v.company}
-                      </span>
-                    )}
-                  </SelectItem>
-                ))}
+                {vendors.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    No vendors found. Add a vendor first.
+                  </div>
+                ) : (
+                  vendors.map((v) => (
+                    <SelectItem key={v.id} value={v.id}>
+                      {v.name}
+                      {v.company && (
+                        <span className="ml-1.5 text-muted-foreground text-xs">
+                          · {v.company}
+                        </span>
+                      )}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>

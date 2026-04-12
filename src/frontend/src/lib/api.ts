@@ -1447,7 +1447,41 @@ export async function createResume(input: {
       "resumes",
       payload,
     );
-    return mapResumeRow(result);
+    const resume = mapResumeRow(result);
+
+    // ── Candidate sync: also insert a row into candidates table ──────────────
+    // Non-blocking — if it fails (e.g. duplicate email), log but don't throw.
+    try {
+      const candidatePayload: Record<string, unknown> = {
+        name: sanitizeForPostgres(input.candidateName),
+        email: input.email ? sanitizeForPostgres(input.email) : null,
+        phone: input.phone ? sanitizeForPostgres(input.phone) : null,
+        role: sanitizeForPostgres(input.extractedRole),
+        skills: skillsArray,
+        experience: sanitizeForPostgres(input.extractedExperience),
+        notes: sanitizeForPostgres(input.extractedExperience),
+        location: input.location ? sanitizeForPostgres(input.location) : null,
+        vendor_id: input.sourceVendorId ?? null,
+        status: "active",
+        stage: "Applied",
+        health_score: 50,
+      };
+      await supabaseInsert<Record<string, unknown>>(
+        "candidates",
+        candidatePayload,
+      );
+    } catch (syncErr) {
+      // Non-fatal — candidate sync failure must not block resume save
+      const se = syncErr as Record<string, unknown>;
+      console.warn(
+        "Candidate sync after resume save failed (non-fatal):",
+        se?.message,
+        "| code:",
+        se?.code,
+      );
+    }
+
+    return resume;
   } catch (err) {
     // Detailed error logging so the exact failing column is visible in the console
     const e = err as Record<string, unknown>;
