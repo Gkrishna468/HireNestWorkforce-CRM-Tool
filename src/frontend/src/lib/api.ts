@@ -4,6 +4,12 @@
  * still use the Motoko actor as a fallback/stub.
  */
 
+/* RLS FIX — Run in Supabase SQL Editor if getting 401/403 on submissions:
+ALTER TABLE submissions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS allow_all_submissions ON submissions;
+CREATE POLICY allow_all_submissions ON submissions FOR ALL USING (true) WITH CHECK (true);
+*/
+
 /* ============================================================
    SUPABASE SQL TO RUN — Fuzzy Duplicate Detection
    Copy and paste the block below into your Supabase SQL Editor
@@ -907,7 +913,7 @@ export async function createSubmission(
   _actor: Actor,
   input: SubmissionFormInput,
 ): Promise<Submission> {
-  const row = await supabaseInsert<Record<string, unknown>>("submissions", {
+  const payload = {
     job_id: input.jobId ?? null,
     candidate_id: input.candidateId ?? null,
     vendor_id: input.vendorId ?? null,
@@ -916,7 +922,21 @@ export async function createSubmission(
     pipeline_stage: input.pipelineStage ?? "resume_sent",
     notes: input.notes ?? null,
     last_stage_change_at: new Date().toISOString(),
+  };
+
+  // Debug: log exact payload so any rejected field is immediately visible
+  console.log("Submission payload:", JSON.stringify(payload));
+
+  // Debug: confirm anon key is present before the insert call
+  const { getSupabaseCreds } = await import("./supabase");
+  console.log("Supabase auth check in submission:", {
+    hasAnonKey: !!getSupabaseCreds()?.anonKey,
   });
+
+  const row = await supabaseInsert<Record<string, unknown>>(
+    "submissions",
+    payload,
+  );
   return mapSubmissionRow(row);
 }
 
@@ -1355,32 +1375,31 @@ export async function createResume(input: {
   }
 
   // ── Fix 2: skills array guard — handles array, string, or object shapes ─────
-  function toSkillsArray(raw: unknown): string[] {
-    if (Array.isArray(raw))
-      return raw.map((s) => sanitizeForPostgres(String(s))).filter(Boolean);
-    if (typeof raw === "string")
-      return raw
+  function toSkillsArray(skills: unknown): string[] {
+    if (Array.isArray(skills))
+      return skills.map((s) => String(s).trim()).filter(Boolean);
+    if (typeof skills === "object" && skills !== null)
+      return Object.values(skills as Record<string, unknown>)
+        .map((s) => String(s).trim())
+        .filter(Boolean);
+    if (typeof skills === "string")
+      return skills
         .split(",")
-        .map((s) => sanitizeForPostgres(s.trim()))
+        .map((s) => s.trim())
         .filter(Boolean);
-    if (raw && typeof raw === "object") {
-      // Handle object with numeric keys like {"0":"Salesforce","1":"Apex"}
-      return Object.values(raw as Record<string, unknown>)
-        .map((s) => sanitizeForPostgres(String(s)))
-        .filter(Boolean);
-    }
     return [];
   }
 
-  // NOTE: If save fails, run in Supabase SQL Editor:
-  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS source_vendor_id UUID REFERENCES vendors(id);
-  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS email TEXT;
-  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS phone TEXT;
-  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS years_experience INT;
-  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS location TEXT;
-  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS extracted_skills TEXT[];
-
   const skillsArray = toSkillsArray(input.extractedSkills);
+
+  // Debug: verify skills type before insert
+  console.log(
+    "Skills type check:",
+    typeof input.extractedSkills,
+    Array.isArray(input.extractedSkills),
+    "result:",
+    skillsArray,
+  );
 
   const payload = {
     file_name: sanitizeForPostgres(input.fileName),
@@ -1401,14 +1420,7 @@ export async function createResume(input: {
     source_vendor_id: input.sourceVendorId ?? null,
   };
 
-  // Debug log — verify skills is a proper array before insert
-  console.log(
-    "[Resume Save] Skills type:",
-    typeof payload.extracted_skills,
-    Array.isArray(payload.extracted_skills),
-    payload.extracted_skills?.slice?.(0, 3),
-  );
-
+  // Debug log — verify skills is a proper array before insert (kept for compatibility)
   try {
     const result = await supabaseInsert<Record<string, unknown>>(
       "resumes",

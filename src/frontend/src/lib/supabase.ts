@@ -24,17 +24,40 @@ export function getSupabaseCreds(): SupabaseCreds | null {
       parsed.serviceRoleKey ??
       ""
     ).trim();
-    if (!url || !anonKey) return null;
+
+    // Auth debug — visible in browser console to diagnose 401 errors
+    console.log("Supabase auth check:", {
+      url,
+      hasAnonKey: !!anonKey,
+      anonKeyPrefix: anonKey ? anonKey.slice(0, 10) : "(empty)",
+    });
+
+    if (!url || !anonKey) {
+      if (!anonKey) {
+        console.error(
+          "Supabase anon key is missing. Please check Settings → Integrations.",
+        );
+        throw new Error(
+          "Supabase anon key is missing. Please check Settings → Integrations.",
+        );
+      }
+      return null;
+    }
     return { url, anonKey, serviceKey: serviceKey || anonKey };
-  } catch {
+  } catch (err) {
+    // Re-throw the explicit anon-key error; swallow JSON parse failures
+    if (err instanceof Error && err.message.includes("anon key")) throw err;
     return null;
   }
 }
 
 function buildHeaders(creds: SupabaseCreds): Record<string, string> {
+  // Always use anonKey for Authorization — serviceKey is only for admin ops.
+  // Using the wrong key here causes 401 when RLS is enabled.
+  console.log("Supabase auth session:", { hasKey: !!creds.anonKey });
   return {
-    apikey: creds.serviceKey || creds.anonKey,
-    Authorization: `Bearer ${creds.serviceKey || creds.anonKey}`,
+    apikey: creds.anonKey,
+    Authorization: `Bearer ${creds.anonKey}`,
     "Content-Type": "application/json",
     Prefer: "return=representation",
   };
