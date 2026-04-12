@@ -388,6 +388,7 @@ function AddCandidateModal({
       open={open}
       onOpenChange={onClose}
       title="Add Candidate"
+      description="Add a new candidate to the pipeline with their details and expected salary."
       size="lg"
     >
       <form
@@ -696,7 +697,12 @@ function SubmitToJobModal({
   }
 
   return (
-    <AppModal open={open} onOpenChange={onClose} title="Submit to Job">
+    <AppModal 
+      open={open} 
+      onOpenChange={onClose} 
+      title="Submit to Job"
+      description="Submit this candidate to a job position with proposed rate."
+    >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <div className="space-y-1">
           <Label className="text-xs">Job *</Label>
@@ -785,7 +791,6 @@ export default function CandidatesPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOver, setDragOver] = useState<string | null>(null);
   
-  // Submit to job modal state
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
 
