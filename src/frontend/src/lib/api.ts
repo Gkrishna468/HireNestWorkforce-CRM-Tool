@@ -3,6 +3,78 @@
  * Non-entity calls (pipeline stages, follow-ups, metrics, pulse dashboard, etc.)
  * still use the Motoko actor as a fallback/stub.
  */
+
+/* ============================================================
+   SUPABASE SQL TO RUN — Fuzzy Duplicate Detection
+   Copy and paste the block below into your Supabase SQL Editor
+   and click "Run" before using the fuzzy duplicate feature.
+   ============================================================
+
+-- Enable trigram similarity extension (required for similarity() function):
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE OR REPLACE FUNCTION find_similar_candidates(
+  input_name TEXT,
+  input_phone TEXT,
+  input_skills TEXT[]
+)
+RETURNS TABLE (
+  id UUID,
+  candidate_name TEXT,
+  email TEXT,
+  phone TEXT,
+  extracted_skills TEXT[],
+  extracted_role TEXT,
+  similarity_score NUMERIC,
+  match_reasons TEXT[]
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  phone_clean TEXT := regexp_replace(COALESCE(input_phone, ''), '[^0-9]', '', 'g');
+  name_lower  TEXT := lower(COALESCE(input_name, ''));
+BEGIN
+  RETURN QUERY
+  SELECT
+    r.id,
+    r.candidate_name,
+    r.email,
+    r.phone,
+    r.extracted_skills,
+    r.extracted_role,
+    ROUND((
+      (similarity(lower(COALESCE(r.candidate_name,'')), name_lower) * 40)
+      + CASE WHEN phone_clean <> '' AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean THEN 35 ELSE 0 END
+      + CASE WHEN array_length(input_skills, 1) > 0 AND array_length(r.extracted_skills, 1) > 0
+             THEN ROUND(
+                (SELECT COUNT(*) FROM unnest(input_skills) s WHERE lower(s) = ANY(SELECT lower(x) FROM unnest(r.extracted_skills) x))::NUMERIC
+                / GREATEST(array_length(input_skills,1), array_length(r.extracted_skills,1)) * 25
+             )
+             ELSE 0 END
+    )::NUMERIC, 0) AS similarity_score,
+    ARRAY_REMOVE(ARRAY[
+      CASE WHEN similarity(lower(COALESCE(r.candidate_name,'')), name_lower) > 0.4 THEN 'Name match' ELSE NULL END,
+      CASE WHEN phone_clean <> '' AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean THEN 'Phone match' ELSE NULL END,
+      CASE WHEN array_length(input_skills,1) > 0 AND (
+        SELECT COUNT(*) FROM unnest(input_skills) s WHERE lower(s) = ANY(SELECT lower(x) FROM unnest(r.extracted_skills) x)
+      ) > 0 THEN 'Skills overlap' ELSE NULL END
+    ], NULL) AS match_reasons
+  FROM resumes r
+  WHERE r.status <> 'archived'
+    AND (
+      similarity(lower(COALESCE(r.candidate_name,'')), name_lower) > 0.3
+      OR (phone_clean <> '' AND regexp_replace(COALESCE(r.phone,''),'[^0-9]','','g') = phone_clean)
+      OR (
+        array_length(input_skills,1) > 0 AND array_length(r.extracted_skills,1) > 0
+        AND (SELECT COUNT(*) FROM unnest(input_skills) s WHERE lower(s) = ANY(SELECT lower(x) FROM unnest(r.extracted_skills) x)) > 1
+      )
+    )
+  ORDER BY similarity_score DESC
+  LIMIT 5;
+END;
+$$;
+
+   ============================================================ */
 import type {
   Activity,
   ApprovalItem,
@@ -15,6 +87,7 @@ import type {
   ClientJobLink,
   FollowUp,
   FollowUpStatus,
+  FuzzyDuplicateMatch,
   Job,
   MorningBriefing,
   PipelineStage,
@@ -48,6 +121,7 @@ import {
   supabaseBatchInsert,
   supabaseDelete,
   supabaseInsert,
+  supabaseRpc,
   supabaseSelect,
   supabaseUpdate,
 } from "./supabase";
@@ -1378,4 +1452,59 @@ export async function softDeleteClientJobLink(
   await supabaseUpdate("client_job_links", safeString(rows[0].id), {
     deleted_at: new Date().toISOString(),
   });
+}
+
+// ── Fuzzy Duplicate Detection ─────────────────────────────────────────────────
+
+/**
+ * Calls the `find_similar_candidates` Supabase RPC to find resumes that are
+ * potentially the same person as the incoming resume, scored 0–100 across
+ * name similarity (40pts), phone match (35pts), and skills overlap (25pts).
+ *
+ * Requires the SQL in the comment block at the top of this file to be run
+ * in your Supabase SQL Editor first.
+ */
+export async function findSimilarCandidates(params: {
+  inputName: string;
+  inputPhone: string | null;
+  inputSkills: string[];
+}): Promise<FuzzyDuplicateMatch[]> {
+  try {
+    const rows = await supabaseRpc<{
+      id: string;
+      candidate_name: string;
+      email: string;
+      phone: string;
+      extracted_skills: string[];
+      extracted_role: string;
+      similarity_score: number;
+      match_reasons: string[];
+    }>("find_similar_candidates", {
+      input_name: params.inputName,
+      input_phone: params.inputPhone?.replace(/\D/g, "") ?? "",
+      input_skills: params.inputSkills,
+    });
+
+    return (rows ?? []).map(
+      (row): FuzzyDuplicateMatch => ({
+        id: row.id,
+        candidateName: row.candidate_name ?? "",
+        email: row.email ?? "",
+        phone: row.phone ?? "",
+        extractedSkills: Array.isArray(row.extracted_skills)
+          ? row.extracted_skills
+          : [],
+        extractedRole: row.extracted_role ?? "",
+        similarityScore: Number(row.similarity_score),
+        matchReasons: Array.isArray(row.match_reasons) ? row.match_reasons : [],
+      }),
+    );
+  } catch (err) {
+    // Non-fatal: RPC may not exist yet (function not created in Supabase)
+    console.warn(
+      "findSimilarCandidates: RPC not available — run the SQL setup.",
+      (err as Error).message,
+    );
+    return [];
+  }
 }

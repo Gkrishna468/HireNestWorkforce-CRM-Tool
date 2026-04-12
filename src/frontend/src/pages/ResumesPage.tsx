@@ -24,6 +24,7 @@ import {
   useCreateResume,
   useCreateSubmission,
   useDeleteResume,
+  useFindSimilarCandidates,
   useJobs,
   useListSubmissionsForResume,
   useResumes,
@@ -37,7 +38,7 @@ import {
   scoreJobMatch,
 } from "@/lib/resumeParser";
 import { getSupabaseCreds } from "@/lib/supabase";
-import type { Resume, ResumeMatch } from "@/types/crm";
+import type { FuzzyDuplicateMatch, Resume, ResumeMatch } from "@/types/crm";
 import { Link } from "@tanstack/react-router";
 import {
   AlertCircle,
@@ -46,6 +47,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Eye,
   FileText,
   MapPin,
   Phone,
@@ -126,6 +128,197 @@ function StatusBadge({ status }: { status: Resume["status"] }) {
       <span className="w-1.5 h-1.5 rounded-full bg-primary" />
       Pending
     </span>
+  );
+}
+
+// ── Fuzzy duplicate match panel ───────────────────────────────────────────────
+
+interface FuzzyMatchesPanelProps {
+  matches: FuzzyDuplicateMatch[];
+  isChecking: boolean;
+  onMarkSamePersonAndSave: (matchId: string) => void;
+  isSaving: boolean;
+}
+
+function similarityLabel(score: number): {
+  label: string;
+  bg: string;
+  text: string;
+  border: string;
+  panelBg: string;
+  panelBorder: string;
+} {
+  if (score >= 80)
+    return {
+      label: "High risk",
+      bg: "bg-red-500/15",
+      text: "text-red-600 dark:text-red-400",
+      border: "border-red-500/25",
+      panelBg: "bg-red-50 dark:bg-red-900/20",
+      panelBorder: "border-red-500/30",
+    };
+  if (score >= 50)
+    return {
+      label: "Possible match",
+      bg: "bg-amber-500/15",
+      text: "text-amber-700 dark:text-amber-300",
+      border: "border-amber-500/25",
+      panelBg: "bg-amber-50 dark:bg-amber-900/20",
+      panelBorder: "border-amber-500/30",
+    };
+  return {
+    label: "Low match",
+    bg: "bg-muted",
+    text: "text-muted-foreground",
+    border: "border-border",
+    panelBg: "bg-muted/30",
+    panelBorder: "border-border",
+  };
+}
+
+function FuzzyMatchesPanel({
+  matches,
+  isChecking,
+  onMarkSamePersonAndSave,
+  isSaving,
+}: FuzzyMatchesPanelProps) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  if (!isChecking && matches.length === 0) return null;
+
+  return (
+    <div className="space-y-2" data-ocid="fuzzy-matches-panel">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-semibold text-foreground">
+          Possible matches
+        </span>
+        {isChecking && (
+          <span className="text-[10px] text-muted-foreground animate-pulse">
+            Checking for matches…
+          </span>
+        )}
+        {!isChecking && matches.length > 0 && (
+          <span className="text-[10px] text-muted-foreground">
+            {matches.length} candidate{matches.length !== 1 ? "s" : ""} found
+          </span>
+        )}
+      </div>
+
+      {!isChecking && (
+        <div className="space-y-2 max-h-56 overflow-y-auto pr-0.5">
+          {matches.slice(0, 3).map((m) => {
+            const style = similarityLabel(m.similarityScore);
+            const isExpanded = expandedId === m.id;
+            return (
+              <div
+                key={m.id}
+                className={`rounded-lg border p-3 ${style.panelBg} ${style.panelBorder}`}
+                data-ocid={`fuzzy-match-${m.id}`}
+              >
+                <div className="flex items-start gap-2.5">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-foreground truncate">
+                        {m.candidateName || "Unknown"}
+                      </span>
+                      {m.extractedRole && (
+                        <span className="text-[10px] text-muted-foreground truncate">
+                          · {m.extractedRole}
+                        </span>
+                      )}
+                    </div>
+                    {/* Match reason chips */}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {m.matchReasons.map((reason) => (
+                        <span
+                          key={reason}
+                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-card border border-border text-muted-foreground"
+                        >
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Score badge */}
+                  <span
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border flex-shrink-0 ${style.bg} ${style.text} ${style.border}`}
+                  >
+                    {m.similarityScore}%
+                    <span className="font-normal">{style.label}</span>
+                  </span>
+                </div>
+
+                {/* Expand / view profile */}
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(isExpanded ? null : m.id)}
+                    className="inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
+                    data-ocid={`fuzzy-view-profile-${m.id}`}
+                  >
+                    <Eye className="h-2.5 w-2.5" />
+                    {isExpanded ? "Hide profile" : "View profile"}
+                  </button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className={`h-6 text-[10px] px-2 border-current ${style.text}`}
+                    onClick={() => onMarkSamePersonAndSave(m.id)}
+                    disabled={isSaving}
+                    data-ocid={`fuzzy-same-person-${m.id}`}
+                  >
+                    This is the same person
+                  </Button>
+                </div>
+
+                {/* Expanded profile popover */}
+                {isExpanded && (
+                  <div className="mt-2.5 rounded-lg bg-card border border-border p-2.5 space-y-1.5 text-[10px]">
+                    {m.email && (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          Email:
+                        </span>
+                        {m.email}
+                      </div>
+                    )}
+                    {m.phone && (
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          Phone:
+                        </span>
+                        {m.phone}
+                      </div>
+                    )}
+                    {m.extractedSkills.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        <span className="font-medium text-foreground mr-1">
+                          Skills:
+                        </span>
+                        {m.extractedSkills.slice(0, 5).map((s) => (
+                          <span
+                            key={s}
+                            className="px-1 py-0.5 rounded bg-muted border border-border text-muted-foreground"
+                          >
+                            {s}
+                          </span>
+                        ))}
+                        {m.extractedSkills.length > 5 && (
+                          <span className="text-muted-foreground">
+                            +{m.extractedSkills.length - 5}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -467,11 +660,49 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
   } | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extractProgress, setExtractProgress] = useState(0);
+  const [fuzzyMatches, setFuzzyMatches] = useState<FuzzyDuplicateMatch[]>([]);
+  const fuzzyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const createResume = useCreateResume();
   const checkDuplicate = useCheckDuplicateResume();
+  const findSimilar = useFindSimilarCandidates();
   const { data: vendors = [], isLoading: vendorsLoading } = useVendors();
 
+  // Trigger fuzzy search after field changes (debounced 800ms)
+  // Only runs once name is filled — name is the primary signal.
+  function scheduleFuzzySearch(name: string, ph: string, skills: string) {
+    if (fuzzyDebounceRef.current) clearTimeout(fuzzyDebounceRef.current);
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFuzzyMatches([]);
+      return;
+    }
+    fuzzyDebounceRef.current = setTimeout(async () => {
+      const skillsArr = skills
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      try {
+        const results = await findSimilar.mutateAsync({
+          inputName: trimmedName,
+          inputPhone: ph.trim() || null,
+          inputSkills: skillsArr,
+        });
+        setFuzzyMatches(results.filter((m) => m.similarityScore >= 30));
+      } catch {
+        // non-fatal
+      }
+    }, 800);
+  }
+
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (fuzzyDebounceRef.current) clearTimeout(fuzzyDebounceRef.current);
+    };
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scheduleFuzzySearch is stable per render; only re-run when file changes
   useEffect(() => {
     let progressTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -507,12 +738,12 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
 
         // Pre-fill full name: use extracted name or fall back to filename
         const extractedName = parsed.candidateName || "";
-        if (extractedName && extractedName !== "--") {
-          setCandidateName(extractedName);
-        } else {
-          setCandidateName(extractNameFromFilename(file.name));
-        }
+        const finalName =
+          extractedName && extractedName !== "--"
+            ? extractedName
+            : extractNameFromFilename(file.name);
 
+        setCandidateName(finalName);
         setEmail(parsed.email || "");
         setPhone(parsed.phone || "");
         setLocation(parsed.location || "");
@@ -520,6 +751,13 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
         setExperience(parsed.extractedExperience || "");
         setYearsExperience(parsed.yearsExperience);
         setSkillsInput(parsed.skills.join(", "));
+
+        // Auto-trigger fuzzy search after initial parse
+        scheduleFuzzySearch(
+          finalName,
+          parsed.phone || "",
+          parsed.skills.join(", "),
+        );
       } catch (err) {
         setExtractError((err as Error).message ?? "Extraction failed.");
       } finally {
@@ -533,6 +771,7 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
     return () => {
       if (progressTimer) clearInterval(progressTimer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file]);
 
   async function handleEmailBlur() {
@@ -569,7 +808,7 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
       .filter(Boolean);
   }
 
-  async function saveResume(asDuplicate: boolean) {
+  async function saveResume(asDuplicate: boolean, duplicateOfId?: string) {
     const trimmedName = candidateName.trim();
     if (!trimmedName) {
       setNameError("Full name is required.");
@@ -594,7 +833,8 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
         status: asDuplicate ? "duplicate" : "active",
         availability: availability || undefined,
         duplicateOf:
-          asDuplicate && duplicateInfo ? duplicateInfo.id : undefined,
+          duplicateOfId ??
+          (asDuplicate && duplicateInfo ? duplicateInfo.id : undefined),
         yearsExperience,
         location: location.trim() || undefined,
         sourceVendorId,
@@ -629,6 +869,7 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
     .filter(Boolean);
 
   const canSave = candidateName.trim().length > 0 && sourceVendorId.length > 0;
+  const hasFuzzyMatches = fuzzyMatches.length > 0;
 
   return (
     <div
@@ -705,6 +946,7 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
                   onChange={(e) => {
                     setCandidateName(e.target.value);
                     if (e.target.value.trim()) setNameError("");
+                    scheduleFuzzySearch(e.target.value, phone, skillsInput);
                   }}
                   placeholder="Full name"
                   className="h-9 text-sm"
@@ -784,7 +1026,14 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
                   <Input
                     type="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      scheduleFuzzySearch(
+                        candidateName,
+                        e.target.value,
+                        skillsInput,
+                      );
+                    }}
                     placeholder="+91 9876543210"
                     className="h-9 text-sm"
                     data-ocid="review-phone"
@@ -862,7 +1111,10 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
                 </Label>
                 <Input
                   value={skillsInput}
-                  onChange={(e) => setSkillsInput(e.target.value)}
+                  onChange={(e) => {
+                    setSkillsInput(e.target.value);
+                    scheduleFuzzySearch(candidateName, phone, e.target.value);
+                  }}
                   placeholder="React, TypeScript, Node.js, Salesforce…"
                   className="h-9 text-sm"
                   data-ocid="review-skills"
@@ -962,6 +1214,14 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Fuzzy duplicate matches — shown above save button */}
+              <FuzzyMatchesPanel
+                matches={fuzzyMatches}
+                isChecking={findSimilar.isPending}
+                onMarkSamePersonAndSave={(matchId) => saveResume(true, matchId)}
+                isSaving={createResume.isPending}
+              />
             </>
           )}
         </div>
@@ -997,7 +1257,9 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
                   ) : (
                     <>
                       <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                      Save Resume
+                      {hasFuzzyMatches
+                        ? "Save as New (not a duplicate)"
+                        : "Save Resume"}
                     </>
                   )}
                 </Button>
@@ -1733,7 +1995,8 @@ function SqlSetupNote() {
           <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
           <div className="min-w-0">
             <p className="text-xs font-semibold text-foreground">
-              One-time setup: Update the resumes table schema
+              One-time setup: Update the resumes table schema + enable fuzzy
+              duplicate detection
             </p>
             <p className="text-xs text-muted-foreground mt-1">
               Run this SQL in your{" "}
@@ -1743,11 +2006,11 @@ function SqlSetupNote() {
               >
                 SQL Editor
               </Link>{" "}
-              to enable email, phone, location, years of experience, and vendor
-              fields:
+              to enable all fields and the fuzzy candidate matching function:
             </p>
             <pre className="mt-2 text-[10px] bg-card border border-border rounded-lg p-3 overflow-x-auto text-foreground font-mono leading-relaxed whitespace-pre">
-              {`ALTER TABLE resumes ADD COLUMN IF NOT EXISTS email TEXT;
+              {`-- Schema columns
+ALTER TABLE resumes ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS years_experience INT;
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS location TEXT;
@@ -1755,7 +2018,11 @@ ALTER TABLE resumes ADD COLUMN IF NOT EXISTS source_vendor_id UUID REFERENCES ve
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS availability TEXT;
 ALTER TABLE resumes ADD COLUMN IF NOT EXISTS duplicate_of UUID;
-ALTER TABLE submissions ADD COLUMN IF NOT EXISTS resume_id UUID REFERENCES resumes(id);`}
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS resume_id UUID REFERENCES resumes(id);
+
+-- Fuzzy duplicate detection (requires pg_trgm)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- See full function SQL in src/frontend/src/lib/api.ts (top of file)`}
             </pre>
           </div>
         </div>

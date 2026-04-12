@@ -444,3 +444,22 @@ export interface ClientJobLink {
   jobId: string;
   linkedAt: string;
 }
+
+// ── Fuzzy Duplicate Match ─────────────────────────────────────────────────────
+
+/**
+ * Returned by the `find_similar_candidates` Supabase RPC.
+ * similarityScore is 0–100, matchReasons contains fired signal labels.
+ */
+export interface FuzzyDuplicateMatch {
+  id: string;
+  candidateName: string;
+  email: string;
+  phone: string;
+  extractedSkills: string[];
+  extractedRole: string;
+  /** Composite score 0–100 (name 40 + phone 35 + skills 25) */
+  similarityScore: number;
+  /** e.g. ["Name match", "Phone match", "Skills overlap"] */
+  matchReasons: string[];
+}

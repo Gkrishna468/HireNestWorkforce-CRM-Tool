@@ -10,6 +10,7 @@ import type {
   BenchRecord,
   BenchRecordInput,
   FollowUpStatus,
+  FuzzyDuplicateMatch,
   Resume,
   ResumeMatch,
   SubmissionStatus,
@@ -848,8 +849,7 @@ export function useDeleteBenchRecord() {
 
 // ── Re-exports for type usage ─────────────────────────────────────────────────
 export type { BenchRecord, BenchRecordInput };
-
-// ── Resumes ────────────────────────────────────────────────────────────────────
+export type { FuzzyDuplicateMatch, Resume, ResumeMatch };
 
 export function useResumes() {
   return useQuery<Resume[]>({
@@ -904,6 +904,17 @@ export function useCheckDuplicateResume() {
   return useMutation({
     mutationFn: (email: string) => api.checkDuplicateResume(email),
     onError: handleMutationError,
+  });
+}
+
+export function useFindSimilarCandidates() {
+  return useMutation({
+    mutationFn: (params: {
+      inputName: string;
+      inputPhone: string | null;
+      inputSkills: string[];
+    }) => api.findSimilarCandidates(params),
+    // Non-fatal — silently ignore errors (RPC may not exist yet)
   });
 }
 
@@ -995,5 +1006,3 @@ export function useSoftDeleteClientJobLink() {
     onError: handleMutationError,
   });
 }
-
-export type { Resume, ResumeMatch };

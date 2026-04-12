@@ -154,3 +154,20 @@ export async function supabaseDelete(table: string, id: string): Promise<void> {
     await handleResponse(res);
   }
 }
+
+/**
+ * Call a Supabase RPC (stored function).
+ * POST /rest/v1/rpc/<fnName> with a JSON body of named parameters.
+ */
+export async function supabaseRpc<T>(
+  fnName: string,
+  params: Record<string, unknown>,
+): Promise<T[]> {
+  const creds = requireCreds();
+  const res = await fetch(`${creds.url}/rest/v1/rpc/${fnName}`, {
+    method: "POST",
+    headers: buildHeaders(creds),
+    body: JSON.stringify(params),
+  });
+  return handleResponse<T[]>(res);
+}
