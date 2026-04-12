@@ -43,6 +43,7 @@ import type {
   VendorFormInput,
   VendorMetricsFormInput,
 } from "../types/forms";
+import { sanitizeText } from "./resumeParser";
 import {
   supabaseBatchInsert,
   supabaseDelete,
@@ -1238,7 +1239,7 @@ export async function createResume(input: {
   candidateName: string;
   email?: string;
   phone?: string;
-  /** Skills as array — stored as comma-joined TEXT for widest schema compat */
+  /** Skills as array — sent as JSON array to Supabase (TEXT[] column) */
   extractedSkills: string[];
   extractedExperience: string;
   extractedRole: string;
@@ -1250,24 +1251,57 @@ export async function createResume(input: {
   location?: string;
   sourceVendorId?: string;
 }): Promise<Resume> {
-  const result = await supabaseInsert<Record<string, unknown>>("resumes", {
-    file_name: input.fileName,
-    file_url: input.fileUrl ?? null,
-    candidate_name: input.candidateName,
-    email: input.email ?? null,
-    phone: input.phone ?? null,
-    extracted_skills: input.extractedSkills.join(", "),
-    extracted_experience: input.extractedExperience,
-    extracted_role: input.extractedRole,
-    raw_text: input.rawText,
-    status: input.status ?? "active",
-    availability: input.availability ?? null,
-    duplicate_of: input.duplicateOf ?? null,
-    years_experience: input.yearsExperience ?? null,
-    location: input.location ?? null,
-    source_vendor_id: input.sourceVendorId ?? null,
-  });
-  return mapResumeRow(result);
+  // Sanitize rawText to strip Unicode escape sequences before DB insert
+  const sanitizedRawText = sanitizeText(input.rawText);
+
+  // NOTE: If save fails, run in Supabase SQL Editor:
+  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS source_vendor_id UUID REFERENCES vendors(id);
+  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS full_name TEXT;
+  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS email TEXT;
+  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS phone TEXT;
+  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS years_experience INT;
+  // ALTER TABLE resumes ADD COLUMN IF NOT EXISTS location TEXT;
+  // ALTER TABLE resumes ALTER COLUMN extracted_skills TYPE TEXT[] USING string_to_array(extracted_skills, ',');
+
+  try {
+    const result = await supabaseInsert<Record<string, unknown>>("resumes", {
+      file_name: input.fileName,
+      file_url: input.fileUrl ?? null,
+      candidate_name: input.candidateName,
+      email: input.email ?? null,
+      phone: input.phone ?? null,
+      // Send as JSON array — Supabase REST parses TEXT[] from JSON array with Content-Type: application/json
+      extracted_skills: input.extractedSkills,
+      extracted_experience: input.extractedExperience,
+      extracted_role: input.extractedRole,
+      raw_text: sanitizedRawText,
+      status: input.status ?? "active",
+      availability: input.availability ?? null,
+      duplicate_of: input.duplicateOf ?? null,
+      years_experience: input.yearsExperience ?? null,
+      location: input.location ?? null,
+      source_vendor_id: input.sourceVendorId ?? null,
+    });
+    return mapResumeRow(result);
+  } catch (err) {
+    // Detailed error logging so the exact failing column is visible in the console
+    const e = err as Record<string, unknown>;
+    console.error(
+      "Supabase resume save error:",
+      e?.message,
+      "| details:",
+      e?.details,
+      "| hint:",
+      e?.hint,
+      "| code:",
+      e?.code,
+      "| payload skills type:",
+      typeof input.extractedSkills,
+      "| sourceVendorId:",
+      input.sourceVendorId ?? "(none)",
+    );
+    throw err;
+  }
 }
 
 export async function deleteResume(id: string): Promise<void> {

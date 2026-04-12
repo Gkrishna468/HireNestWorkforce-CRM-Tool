@@ -7,6 +7,21 @@ import type { Job } from "../types/crm";
 
 // ── Unicode sanitization ──────────────────────────────────────────────────────
 
+/**
+ * Extract a display name from a filename.
+ * "Sorabh.doc" → "Sorabh"
+ * "Sorabh_9+_Salesforce.doc" → "Sorabh"
+ * Takes the first underscore/space-delimited token and capitalises the first letter.
+ */
+export function extractNameFromFilename(filename: string): string {
+  // Strip extension
+  const withoutExt = filename.replace(/\.[^/.]+$/, "");
+  // Take first token split on underscore or space
+  const first = withoutExt.split(/[_\s]+/)[0] ?? withoutExt;
+  if (!first) return "";
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
 /** Replace Unicode "smart" punctuation and non-ASCII with safe ASCII equivalents */
 export function sanitizeText(text: string): string {
   return (

@@ -30,6 +30,7 @@ import {
   useVendors,
 } from "@/hooks/use-crm";
 import {
+  extractNameFromFilename,
   extractTextFromDocx,
   extractTextFromPdf,
   parseResumeText,
@@ -456,7 +457,9 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
     undefined,
   );
   const [availability, setAvailability] = useState<AvailabilityOption>("");
+  const [sourceVendorId, setSourceVendorId] = useState("");
   const [nameError, setNameError] = useState("");
+  const [vendorError, setVendorError] = useState("");
   const [duplicateInfo, setDuplicateInfo] = useState<{
     id: string;
     name: string;
@@ -467,6 +470,7 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
 
   const createResume = useCreateResume();
   const checkDuplicate = useCheckDuplicateResume();
+  const { data: vendors = [], isLoading: vendorsLoading } = useVendors();
 
   useEffect(() => {
     let progressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -500,7 +504,15 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
 
         const parsed = parseResumeText(text);
         setRawText(text.substring(0, 8000));
-        setCandidateName(parsed.candidateName || "");
+
+        // Pre-fill full name: use extracted name or fall back to filename
+        const extractedName = parsed.candidateName || "";
+        if (extractedName && extractedName !== "--") {
+          setCandidateName(extractedName);
+        } else {
+          setCandidateName(extractNameFromFilename(file.name));
+        }
+
         setEmail(parsed.email || "");
         setPhone(parsed.phone || "");
         setLocation(parsed.location || "");
@@ -560,10 +572,15 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
   async function saveResume(asDuplicate: boolean) {
     const trimmedName = candidateName.trim();
     if (!trimmedName) {
-      setNameError("Candidate name is required.");
+      setNameError("Full name is required.");
+      return;
+    }
+    if (!sourceVendorId) {
+      setVendorError("Source vendor is required.");
       return;
     }
     setNameError("");
+    setVendorError("");
     try {
       const resume = await createResume.mutateAsync({
         fileName: file.name,
@@ -580,13 +597,29 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
           asDuplicate && duplicateInfo ? duplicateInfo.id : undefined,
         yearsExperience,
         location: location.trim() || undefined,
+        sourceVendorId,
       });
       toast.success("Resume saved successfully", {
         description: `${trimmedName}'s profile has been added.`,
       });
       onSaved(resume);
-    } catch {
-      // error handled by mutation
+    } catch (err) {
+      const e = err as Record<string, unknown>;
+      const msg = String(e?.message ?? "Failed to save resume");
+      console.error(
+        "Supabase resume save error:",
+        e?.message,
+        "| details:",
+        e?.details,
+        "| hint:",
+        e?.hint,
+        "| code:",
+        e?.code,
+      );
+      toast.error("Save failed", {
+        description: msg,
+        duration: 8000,
+      });
     }
   }
 
@@ -594,6 +627,8 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+
+  const canSave = candidateName.trim().length > 0 && sourceVendorId.length > 0;
 
   return (
     <div
@@ -660,10 +695,10 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
 
           {!isExtracting && !extractError && (
             <>
-              {/* Candidate Name */}
+              {/* Full Name * */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-foreground">
-                  Candidate Name <span className="text-destructive">*</span>
+                  Full Name <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   value={candidateName}
@@ -687,7 +722,7 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
               {/* Email */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-foreground">
-                  Email
+                  Email <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   type="email"
@@ -820,7 +855,7 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
               {/* Skills */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-foreground">
-                  Skills{" "}
+                  Skills <span className="text-destructive">*</span>{" "}
                   <span className="text-muted-foreground font-normal">
                     (comma-separated)
                   </span>
@@ -848,6 +883,55 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
                       </span>
                     )}
                   </div>
+                )}
+              </div>
+
+              {/* Source Vendor * */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-foreground">
+                  Source Vendor <span className="text-destructive">*</span>
+                </Label>
+                {vendorsLoading ? (
+                  <Skeleton className="h-9 w-full rounded-md" />
+                ) : (
+                  <Select
+                    value={sourceVendorId}
+                    onValueChange={(v) => {
+                      setSourceVendorId(v);
+                      if (v) setVendorError("");
+                    }}
+                  >
+                    <SelectTrigger
+                      className="h-9 text-sm"
+                      data-ocid="review-source-vendor"
+                    >
+                      <SelectValue placeholder="Select source vendor…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vendors.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-muted-foreground">
+                          No vendors found. Add a vendor first.
+                        </div>
+                      ) : (
+                        vendors.map((v) => (
+                          <SelectItem key={v.id} value={v.id}>
+                            {v.name}
+                            {v.company && (
+                              <span className="ml-1.5 text-muted-foreground text-xs">
+                                · {v.company}
+                              </span>
+                            )}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+                {vendorError && (
+                  <p className="text-xs text-destructive flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {vendorError}
+                  </p>
                 )}
               </div>
 
@@ -884,30 +968,41 @@ function ExtractionReviewForm({ file, onClose, onSaved }: ExtractionFormProps) {
 
         {/* Footer */}
         {!isExtracting && !extractError && (
-          <div className="sticky bottom-0 bg-card border-t border-border px-6 py-4 flex justify-end gap-2 rounded-b-2xl">
-            <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
-            {!duplicateInfo && (
-              <Button
-                size="sm"
-                onClick={() => saveResume(false)}
-                disabled={createResume.isPending}
-                data-ocid="review-save-btn"
-              >
-                {createResume.isPending ? (
-                  <>
-                    <div className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin mr-1.5" />
-                    Saving…
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                    Save Resume
-                  </>
-                )}
+          <div className="sticky bottom-0 bg-card border-t border-border px-6 py-4 flex items-center justify-between gap-2 rounded-b-2xl">
+            <p className="text-[10px] text-muted-foreground leading-snug">
+              <span className="text-destructive">*</span> Full Name &amp; Source
+              Vendor are required
+            </p>
+            <div className="flex gap-2">
+              <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+                Cancel
               </Button>
-            )}
+              {!duplicateInfo && (
+                <Button
+                  size="sm"
+                  onClick={() => saveResume(false)}
+                  disabled={createResume.isPending || !canSave}
+                  data-ocid="review-save-btn"
+                  title={
+                    !canSave
+                      ? "Full Name and Source Vendor are required"
+                      : undefined
+                  }
+                >
+                  {createResume.isPending ? (
+                    <>
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin mr-1.5" />
+                      Saving…
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                      Save Resume
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </div>

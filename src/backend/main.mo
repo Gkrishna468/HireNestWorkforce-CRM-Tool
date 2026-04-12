@@ -8,11 +8,11 @@ import ApprovalsApi "mixins/approvals-api";
 import DashboardApi "mixins/dashboard-api";
 import BenchApi "mixins/bench-api";
 import SubmissionsAndResumesApi "mixins/submissions-and-resumes-api";
-import Migration "migration";
+
 import Map "mo:core/Map";
 import List "mo:core/List";
 
-(with migration = Migration.run)
+
 actor {
   // ── Shared State ───────────────────────────────────────────────────────────
   let vendors    : Map.Map<Text, T.Vendor>    = Map.empty();
