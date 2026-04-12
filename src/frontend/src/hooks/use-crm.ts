@@ -597,41 +597,68 @@ export function useSubmissionsForResume(resumeId: string) {
   });
 }
 
+// In your use-crm.ts hooks file
 export function useCreateSubmission() {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
+  
   return useMutation({
-    mutationFn: (input: SubmissionFormInput) => {
-      checkSupabaseOrThrow();
-      return api.createSubmission(null, input);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: QK.submissions }),
-    onError: handleMutationError,
-  });
-}
-
-export function useUpdateSubmission() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      patch,
-    }: {
-      id: string;
-      patch:
-        | SubmissionStatus
-        | { status?: SubmissionStatus; pipeline_stage?: string };
+    mutationFn: async (data: {
+      candidateId: string;
+      jobId: string;
+      rateProposed?: number;
+      pipelineStage: string;
     }) => {
-      checkSupabaseOrThrow();
-      return api.updateSubmission(null, id, patch);
+      const supabase = createClient();
+      
+      // Try candidate_id first, if that fails try profile_id
+      const payload: any = {
+        job_id: data.jobId,
+        rate_proposed: data.rateProposed,
+        pipeline_stage: data.pipelineStage,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      
+      // Try candidate_id (most common)
+      payload.candidate_id = data.candidateId;
+      
+      const { data: result, error } = await supabase
+        .from('submissions')
+        .insert(payload)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Submission insert error:', error);
+        
+        // If column not found error, try alternative column name
+        if (error.message?.includes('candidate_id')) {
+          console.log('Trying profile_id instead...');
+          delete payload.candidate_id;
+          payload.profile_id = data.candidateId;
+          
+          const { data: result2, error: error2 } = await supabase
+            .from('submissions')
+            .insert(payload)
+            .select()
+            .single();
+            
+          if (error2) throw error2;
+          return result2;
+        }
+        
+        throw error;
+      }
+      
+      return result;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QK.submissions });
-      qc.invalidateQueries({ queryKey: ["submissions"] });
+      queryClient.invalidateQueries({ queryKey: ['submissions'] });
+      queryClient.invalidateQueries({ queryKey: ['candidates'] });
     },
-    onError: handleMutationError,
   });
 }
-
 export function useUpdateSubmissionStage() {
   const qc = useQueryClient();
   return useMutation({
