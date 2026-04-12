@@ -913,30 +913,51 @@ export async function createSubmission(
   _actor: Actor,
   input: SubmissionFormInput,
 ): Promise<Submission> {
-  const payload = {
-    job_id: input.jobId ?? null,
-    candidate_id: input.candidateId ?? null,
-    vendor_id: input.vendorId ?? null,
+  // STRICT: only columns that exist in the submissions table
+  const submissionPayload = {
     resume_id: input.resumeId ?? null,
-    status: "submitted",
-    pipeline_stage: input.pipelineStage ?? "resume_sent",
-    notes: input.notes ?? null,
-    last_stage_change_at: new Date().toISOString(),
+    job_id: input.jobId ?? null,
+    source_vendor_id: input.vendorId ?? null,
+    submitting_recruiter_id: null,
+    current_stage: input.pipelineStage ?? "resume_sent",
   };
 
-  // Debug: log exact payload so any rejected field is immediately visible
-  console.log("Submission payload:", JSON.stringify(payload));
-
-  // Debug: confirm anon key is present before the insert call
-  const { getSupabaseCreds } = await import("./supabase");
-  console.log("Supabase auth check in submission:", {
-    hasAnonKey: !!getSupabaseCreds()?.anonKey,
-  });
+  console.log("Submission payload:", JSON.stringify(submissionPayload));
 
   const row = await supabaseInsert<Record<string, unknown>>(
     "submissions",
-    payload,
+    submissionPayload,
   );
+  if (
+    (
+      row as {
+        error?: {
+          message?: string;
+          details?: string;
+          hint?: string;
+          code?: string;
+        };
+      }
+    ).error
+  ) {
+    const e = (
+      row as {
+        error: {
+          message?: string;
+          details?: string;
+          hint?: string;
+          code?: string;
+        };
+      }
+    ).error;
+    console.error(
+      "Supabase submission error:",
+      e.message,
+      e.details,
+      e.hint,
+      e.code,
+    );
+  }
   return mapSubmissionRow(row);
 }
 
